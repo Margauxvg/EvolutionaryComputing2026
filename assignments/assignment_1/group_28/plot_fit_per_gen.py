@@ -1,8 +1,8 @@
 """Fitness per generation, aggregated across independent runs.
 
 Adapted from `examples/z_ec_course/plot_fit_per_gen.py`. That script plots one
-run: its band is the spread WITHIN a generation's population. The brief asks for
-the average and spread OVER the independent runs, so this version reads every
+run: its band is the spread within a generation's population. The assignment asks for
+the average and spread over the independent runs, so this version reads every
 database under a variant's folder, reduces each run to one value per generation,
 and takes mean and std across runs.
 
@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from . import config  # noqa: E402
+from .run import DATA  # noqa: E402
 
 
 def per_generation(path: Path, mode: str, stat: str) -> pd.Series:
@@ -58,27 +58,23 @@ def per_generation(path: Path, mode: str, stat: str) -> pd.Series:
 
 
 def runs_for(variant: str) -> list[Path]:
-    return sorted((config.DATA / variant).glob("*/database.db"))
+    return sorted((DATA / variant).glob("*/database.db"))
 
 
 def aggregate(variant: str, mode: str, stat: str) -> pd.DataFrame:
     """-> DataFrame, one column per run, indexed by generation."""
     series = [per_generation(p, mode, stat) for p in runs_for(variant)]
     if not series:
-        msg = f"no databases found under {config.DATA / variant}"
+        msg = f"no databases found under {DATA / variant}"
         raise FileNotFoundError(msg)
     return pd.concat(series, axis=1).dropna()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Fitness per generation, averaged over independent runs"
-    )
+    parser = argparse.ArgumentParser(description="Fitness per generation, averaged over independent runs")
     parser.add_argument("--variants", nargs="+", required=True)
-    parser.add_argument("--mode", choices=["min", "max"], default="min",
-                        help="Whether lower or higher fitness is better")
-    parser.add_argument("--stat", choices=["best", "mean"], default="best",
-                        help="Per-generation statistic taken within each run")
+    parser.add_argument("--mode", choices=["min", "max"], default="min", help="Whether lower or higher fitness is better")
+    parser.add_argument("--stat", choices=["best", "mean"], default="best", help="Per-generation statistic taken within each run")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
@@ -98,7 +94,7 @@ def main() -> None:
     plt.grid(alpha=0.3)
     plt.tight_layout()
 
-    out = Path(args.out) if args.out else config.DATA / "fitness_per_generation.png"
+    out = Path(args.out) if args.out else DATA / "fitness_per_generation.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out)
     plt.close()
