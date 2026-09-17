@@ -12,7 +12,10 @@ from pathlib import Path
 
 import config
 from ariel.body_phenotypes.robogen_lite.decoders._blueprint import load_graph_from_json
-from ariel.ec.genotypes.tree.operators import random_tree as random_genome
+from ariel.ec.genotypes.tree.operators import (
+    random_tree as random_genome,
+    crossover_subtree as crossover_operator,
+)
 from ariel.ec.genotypes.tree.tree_genome import TreeGenome
 from tree_edit_distance import mean_plus_std_tree_edit_distance as fitness_function
 
@@ -70,18 +73,40 @@ def evaluate(population: list[dict]) -> list[dict]:
 
 
 def parent_selection(population: list[dict], tournament_size: int = config.TOURNAMENT_SIZE) -> list[dict]:
-    """Select parents via tournament selection."""
-    parents = []
-    for _ in range(len(population)):
-        contestants = random.sample(population, tournament_size)
+    """Select parents via tournament selection from alive individuals."""
+    candidates = [ind for ind in population if ind.get("fitness") is not None and ind.get("alive", True)]
+    parents: list[dict] = []
+
+    for _ in range(len(candidates)):
+        contestants = random.sample(candidates, tournament_size)
         winner = min(contestants, key=lambda individual: individual["fitness"])
         parents.append(winner)
 
     return parents
 
-def crossover(population: list[dict], crossover_probability: float = config.CROSSOVER_PROBABILITY) -> list[dict]:
-    """Placeholder for crossover step."""
-    return population
+
+def reproduction(population: list[dict], crossover_probability: float = config.CROSSOVER_PROBABILITY) -> list[dict]:
+    """Create new offspring from selected parents."""
+    parents = parent_selection(population)
+    random.shuffle(parents) # Shuffle parents to ensure random pairing for crossover
+
+    offspring: list[dict] = []
+
+    for i in range(0, len(parents) - 1, 2): # Iterate in pairs
+        parent_a = parents[i]
+        parent_b = parents[i + 1]
+
+        if random.random() < crossover_probability:
+            genome_a = TreeGenome.from_dict(parent_a["genotype"])
+            genome_b = TreeGenome.from_dict(parent_b["genotype"])
+            child_a, child_b = crossover_operator(genome_a, genome_b)
+            offspring.append({"genotype": child_a.to_dict(), "fitness": None, "alive": True})
+            offspring.append({"genotype": child_b.to_dict(), "fitness": None, "alive": True})
+        else:
+            offspring.append(parent_a.copy())
+            offspring.append(parent_b.copy())
+
+    return offspring
 
 
 def survivor_selection(population: list[dict], target_population_size: int = config.POP_SIZE) -> list[dict]:
@@ -118,9 +143,9 @@ def build_pipeline(variant: VariantName) -> list:
         case "baseline":
             return [baseline_regenerate, evaluate]
         case "static":
-            return [parent_selection, crossover, mutate_static, evaluate, survivor_selection]
+            return [reproduction, mutate_static, evaluate, survivor_selection]
         case "adaptive":
-            return [parent_selection, crossover, mutate_adaptive, evaluate, survivor_selection]
+            return [reproduction, mutate_adaptive, evaluate, survivor_selection]
         case _:
             raise ValueError(f"Unknown variant: {variant}")
 
