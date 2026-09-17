@@ -3,6 +3,37 @@
 #   cd C:(...)EvolutionaryComputing2026
 #   uv run assignments\assignment_1\group_28\run.py static --seed 1 (example)
 
+# CHANGES 
+#   1. baseline_regenerate now actually regenerates a fresh random population
+#      every generation (it was a no-op before -> baseline never did anything
+#      after generation 1).
+#   2. mutate_adaptive is now genuinely self-adaptive: an AdaptiveMutation
+#      object tracks a mutation probability across generations and updates it
+#      via Rechenberg's 1/5 success rule after each generation's evaluation.
+#   3. reproduction() now records which fitness each offspring should be
+#      compared against ("parent_fitness"), needed for the 1/5 rule.
+#   4. Only OFFSPRING get mutated -- survivors/elites carried over from the
+#      previous generation are left untouched (previously everyone in the
+#      combined population got mutated, including individuals selection had
+#      already decided to protect). --> need to discuss together whether we want to do this
+#   5. mutate() now returns whether it actually changed the genome, instead of
+#      silently returning the original genome on failure -- needed to compute
+#      an honest success rate.
+#   6. Removed the risk of stale "offspring"/tracking data leaking into future
+#      generations by always building brand-new dicts for offspring (the old
+#      code did `parent_a.copy()` in the no-crossover branch, which carried
+#      over whatever transient keys that parent dict happened to have).
+#   7. CSV output now includes the mutation probability used in that
+#      generation (constant for "static", None for "baseline", live-tracked
+#      for "adaptive") so you can plot it against fitness in your report.
+#   8. We need to discuss whether we want to adaptive mutation rate entails IF a mutation happens or how MANY mutations happen; and in the script we need to change a standard mutation operator, now there are still four
+
+#
+# NEW CONFIG CONSTANTS TO config.py:
+#   ADAPTIVE_INITIAL_PROBABILITY, ADAPTIVE_TARGET_SUCCESS, ADAPTIVE_FACTOR,
+#   ADAPTIVE_MIN_PROBABILITY, ADAPTIVE_MAX_PROBABILITY
+# Also added "mutation_probability" to config.CSV_COLUMNS.
+
 import argparse
 import csv
 import random
