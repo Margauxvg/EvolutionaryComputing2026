@@ -15,6 +15,7 @@ from ariel.body_phenotypes.robogen_lite.decoders._blueprint import load_graph_fr
 from ariel.ec.genotypes.tree.operators import (
     random_tree as random_genome,
     crossover_subtree as crossover_operator,
+    get_tree_depth,
     mutate_replace_node,
     mutate_subtree_replacement,
     mutate_shrink,
@@ -113,29 +114,29 @@ def reproduction(population: list[dict], crossover_probability: float = config.C
     return offspring
 
 def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> TreeGenome:
-    """Apply one ARIEL tree mutation operator chosen by probability."""
+    """Apply a valid ARIEL mutation operator chosen by probability."""
     if random.random() >= mutation_probability:
         return genome
 
-    operator_name = random.choices(
-        population=[
-            ("replace_node"),
-            ("subtree_replacement"),
-            ("shrink"),
-            ("hoist"),
-        ],
-        weights=[0.60, 0.10, 0.15, 0.15],
-        k=1,
-    )[0]
+    for _ in range(config.MAX_MUTATION_ATTEMPTS): # Try to mutate the genome up to MAX_MUTATION_ATTEMPTS times
+        candidate = TreeGenome.from_dict(genome.to_dict())
 
-    if operator_name == "replace_node":
-        mutate_replace_node(genome)
-    elif operator_name == "subtree_replacement":
-        mutate_subtree_replacement(genome, max_modules=config.NUM_OF_MODULES)
-    elif operator_name == "shrink":
-        mutate_shrink(genome)
-    elif operator_name == "hoist":
-        mutate_hoist(genome)
+        operator_name = random.choices(
+            ["replace_node", "subtree_replacement", "shrink", "hoist"],
+            weights=[0.60, 0.10, 0.15, 0.15],
+        )[0]
+
+        if operator_name == "replace_node":
+            mutate_replace_node(candidate)
+        elif operator_name == "subtree_replacement":
+            mutate_subtree_replacement(candidate, max_modules=config.NUM_OF_MODULES)
+        elif operator_name == "shrink":
+            mutate_shrink(candidate)
+        elif operator_name == "hoist":
+            mutate_hoist(candidate)
+
+        if len(candidate.nodes) <= config.MAX_TOTAL_MODULES and get_tree_depth(candidate) <= config.MAX_TREE_DEPTH:
+            return candidate
 
     return genome
 
