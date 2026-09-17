@@ -15,6 +15,10 @@ from ariel.body_phenotypes.robogen_lite.decoders._blueprint import load_graph_fr
 from ariel.ec.genotypes.tree.operators import (
     random_tree as random_genome,
     crossover_subtree as crossover_operator,
+    mutate_replace_node,
+    mutate_subtree_replacement,
+    mutate_shrink,
+    mutate_hoist,
 )
 from ariel.ec.genotypes.tree.tree_genome import TreeGenome
 from tree_edit_distance import mean_plus_std_tree_edit_distance as fitness_function
@@ -108,6 +112,32 @@ def reproduction(population: list[dict], crossover_probability: float = config.C
 
     return offspring
 
+def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> TreeGenome:
+    """Apply one ARIEL tree mutation operator chosen by probability."""
+    if random.random() >= mutation_probability:
+        return genome
+
+    operator_name = random.choices(
+        population=[
+            ("replace_node"),
+            ("subtree_replacement"),
+            ("shrink"),
+            ("hoist"),
+        ],
+        weights=[0.60, 0.10, 0.15, 0.15],
+        k=1,
+    )[0]
+
+    if operator_name == "replace_node":
+        mutate_replace_node(genome)
+    elif operator_name == "subtree_replacement":
+        mutate_subtree_replacement(genome, max_modules=config.NUM_OF_MODULES)
+    elif operator_name == "shrink":
+        mutate_shrink(genome)
+    elif operator_name == "hoist":
+        mutate_hoist(genome)
+
+    return genome
 
 def survivor_selection(population: list[dict], target_population_size: int = config.POP_SIZE) -> list[dict]:
     """Placeholder for truncation or elitist survivor selection."""
@@ -119,13 +149,33 @@ def survivor_selection(population: list[dict], target_population_size: int = con
 # ---------------------------------------------------------------------------
 
 def mutate_static(population: list[dict], mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> list[dict]:
-    # TODO: Implement static mutation logic here
-    return population
+    mutated: list[dict] = []
+
+    for individual in population:
+        genome = TreeGenome.from_dict(individual["genotype"])
+        new_genome = mutate(genome, mutation_probability)
+        mutated.append({
+            "genotype": new_genome.to_dict(),
+            "fitness": None,
+            "alive": True,
+        })
+
+    return mutated
 
 
 def mutate_adaptive(population: list[dict], mutation_probability: float = config.ADAPTIVE_MUTATION_PROBABILITY) -> list[dict]:
-    # TODO: Implement adaptive mutation logic here (the parameters might have to change based on the success rate of mutations)
-    return population
+    mutated: list[dict] = []
+
+    for individual in population:
+        genome = TreeGenome.from_dict(individual["genotype"])
+        new_genome = mutate(genome, mutation_probability)
+        mutated.append({
+            "genotype": new_genome.to_dict(),
+            "fitness": None,
+            "alive": True,
+        })
+
+    return mutated
 
 
 def baseline_regenerate(population: list[dict]) -> list[dict]:
