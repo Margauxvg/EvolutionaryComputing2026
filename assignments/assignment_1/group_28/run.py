@@ -91,13 +91,16 @@ def parent_selection(population: list[dict], tournament_size: int = config.TOURN
 
 
 def reproduction(population: list[dict], crossover_probability: float = config.CROSSOVER_PROBABILITY) -> list[dict]:
-    """Create new offspring from selected parents."""
-    parents = parent_selection(population)
-    random.shuffle(parents) # Shuffle parents to ensure random pairing for crossover
+    """Create offspring and keep them in the population for the next generation."""
 
+    parents = parent_selection(population)
+    if len(parents) < 2:
+        return population
+
+    random.shuffle(parents)
     offspring: list[dict] = []
 
-    for i in range(0, len(parents) - 1, 2): # Iterate in pairs
+    for i in range(0, len(parents) - 1, 2):
         parent_a = parents[i]
         parent_b = parents[i + 1]
 
@@ -111,7 +114,8 @@ def reproduction(population: list[dict], crossover_probability: float = config.C
             offspring.append(parent_a.copy())
             offspring.append(parent_b.copy())
 
-    return offspring
+    population.extend(offspring)
+    return population
 
 def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> TreeGenome:
     """Apply a valid ARIEL mutation operator chosen by probability."""
@@ -141,8 +145,22 @@ def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTAT
     return genome
 
 def survivor_selection(population: list[dict], target_population_size: int = config.POP_SIZE) -> list[dict]:
-    """Placeholder for truncation or elitist survivor selection."""
-    return population
+    """Generational replacement with elitism: keep the best of old + offspring."""
+
+    ranking = sorted(population, key=lambda individual: individual["fitness"])
+    elite_count = max(1, int(config.ELITISM_RATIO * target_population_size))
+    elites = ranking[:elite_count]
+
+    next_generation = elites[:]
+    for individual in ranking[elite_count:]:
+        if len(next_generation) >= target_population_size:
+            break
+        next_generation.append(individual)
+
+    for individual in next_generation:
+        individual["alive"] = True
+
+    return next_generation[:target_population_size]
 
 
 # ---------------------------------------------------------------------------
