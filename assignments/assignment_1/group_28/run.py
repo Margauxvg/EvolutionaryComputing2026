@@ -70,9 +70,14 @@ def evaluate(population: list[dict]) -> list[dict]:
 
 
 def parent_selection(population: list[dict], tournament_size: int = config.TOURNAMENT_SIZE) -> list[dict]:
-    """Placeholder for tournament selection."""
-    return population
+    """Select parents via tournament selection."""
+    parents = []
+    for _ in range(len(population)):
+        contestants = random.sample(population, tournament_size)
+        winner = min(contestants, key=lambda individual: individual["fitness"])
+        parents.append(winner)
 
+    return parents
 
 def crossover(population: list[dict], crossover_probability: float = config.CROSSOVER_PROBABILITY) -> list[dict]:
     """Placeholder for crossover step."""
