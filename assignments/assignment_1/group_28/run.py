@@ -66,6 +66,13 @@ TARGETS = load_targets()
 # ---------------------------------------------------------------------------
 # 4. Shared EA steps
 # ---------------------------------------------------------------------------
+def create_random_individual() -> dict:
+    """A single random individual, ready to be evaluated."""
+    return {
+        "genotype": random_genome(max_modules=config.NUM_OF_MODULES).to_dict(),
+        "fitness": None,
+        "alive": True,
+    }
 
 def evaluate(population: list[dict]) -> list[dict]:
     """Evaluate each individual with the assignment fitness function."""
@@ -103,16 +110,24 @@ def reproduction(population: list[dict], crossover_probability: float = config.C
     for i in range(0, len(parents) - 1, 2):
         parent_a = parents[i]
         parent_b = parents[i + 1]
+        baseline = min(parent_a["fitness"], parent_b["fitness"])
 
         if random.random() < crossover_probability:
             genome_a = TreeGenome.from_dict(parent_a["genotype"])
             genome_b = TreeGenome.from_dict(parent_b["genotype"])
             child_a, child_b = crossover_operator(genome_a, genome_b)
-            offspring.append({"genotype": child_a.to_dict(), "fitness": None, "alive": True})
-            offspring.append({"genotype": child_b.to_dict(), "fitness": None, "alive": True})
+            genotypes = (child_a.to_dict(), child_b.to_dict())
         else:
-            offspring.append(parent_a.copy())
-            offspring.append(parent_b.copy())
+            genotypes = (parent_a["genotype"], parent_b["genotype"])
+ 
+        for genotype in genotypes:
+            offspring.append({
+                "genotype": genotype,
+                "fitness": None,
+                "alive": True,
+                "offspring": True,
+                "parent_fitness": baseline,
+            })
 
     population.extend(offspring)
     return population
@@ -120,7 +135,7 @@ def reproduction(population: list[dict], crossover_probability: float = config.C
 def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> TreeGenome:
     """Apply a valid ARIEL mutation operator chosen by probability."""
     if random.random() >= mutation_probability:
-        return genome
+        return genome, False
 
     for _ in range(config.MAX_MUTATION_ATTEMPTS): # Try to mutate the genome up to MAX_MUTATION_ATTEMPTS times
         candidate = TreeGenome.from_dict(genome.to_dict())
@@ -140,9 +155,9 @@ def mutate(genome: TreeGenome, mutation_probability: float = config.STATIC_MUTAT
             mutate_hoist(candidate)
 
         if len(candidate.nodes) <= config.MAX_TOTAL_MODULES and get_tree_depth(candidate) <= config.MAX_TREE_DEPTH:
-            return candidate
+            return candidate, True
 
-    return genome
+    return genome, False
 
 def survivor_selection(population: list[dict], target_population_size: int = config.POP_SIZE) -> list[dict]:
     """Generational replacement with elitism: keep the best of old + offspring."""
@@ -169,37 +184,107 @@ def survivor_selection(population: list[dict], target_population_size: int = con
 
 def mutate_static(population: list[dict], mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> list[dict]:
     mutated: list[dict] = []
-
+    """ Only individuals tagged 'offspring' (fresh
+    this generation) are eligible; survivors/elites pass through untouched.
+    """
     for individual in population:
+        if not individual.get("offspring"):
+            mutated.append(individual)
+            continue
+        
         genome = TreeGenome.from_dict(individual["genotype"])
-        new_genome = mutate(genome, mutation_probability)
+        new_genome, _was_mutated = mutate(genome, mutation_probability)
         mutated.append({
             "genotype": new_genome.to_dict(),
             "fitness": None,
             "alive": True,
         })
-
+        
     return mutated
 
-
-def mutate_adaptive(population: list[dict], mutation_probability: float = config.ADAPTIVE_MUTATION_PROBABILITY) -> list[dict]:
-    mutated: list[dict] = []
-
-    for individual in population:
-        genome = TreeGenome.from_dict(individual["genotype"])
-        new_genome = mutate(genome, mutation_probability)
-        mutated.append({
-            "genotype": new_genome.to_dict(),
-            "fitness": None,
-            "alive": True,
-        })
-
-    return mutated
-
+class AdaptiveMutation:
+    """Mutation PROBABILITY controlled by Rechenberg's 1/5-success rule.
+ 
+    `probability` is the chance that a given offspring gets mutated at all
+    (the operator choice and its strength stay fixed -- see `mutate()` --
+    this isolates probability as the one thing that differs from the static
+    variant). After each generation's offspring are evaluated, `adapt`
+    compares each mutated offspring's fitness to the parent fitness recorded
+    at reproduction time: if more than 1/5 of mutated offspring improved on
+    their parent, the probability grows; otherwise it shrinks.
+ 
+    `_pending` holds direct references to this generation's freshly mutated
+    offspring dicts (paired with the parent fitness to compare against).
+    Because `evaluate()` fills in `entry["fitness"]` on those SAME dict
+    objects afterwards, `adapt()` can just read `entry["fitness"]` straight
+    off -- no flags stored on the population data itself, so there is nothing
+    that could leak into a later generation.
+    """
+ 
+    def __init__(
+        self,
+        initial_probability: float = config.ADAPTIVE_INITIAL_PROBABILITY,
+        target_success: float = config.ADAPTIVE_TARGET_SUCCESS,
+        factor: float = config.ADAPTIVE_FACTOR,
+        min_probability: float = config.ADAPTIVE_MIN_PROBABILITY,
+        max_probability: float = config.ADAPTIVE_MAX_PROBABILITY,
+    ):
+        self.probability = initial_probability
+        self.target_success = target_success
+        self.factor = factor
+        self.min_probability = min_probability
+        self.max_probability = max_probability
+        self._pending: list[tuple[dict, float]] = []
+ 
+    def mutate(self, population: list[dict]) -> list[dict]:
+        mutated: list[dict] = []
+        self._pending = []
+ 
+        for individual in population:
+            if not individual.get("offspring"):
+                mutated.append(individual)
+                continue
+ 
+            genome = TreeGenome.from_dict(individual["genotype"])
+            new_genome, was_mutated = mutate(genome, self.probability)
+            entry = {
+                "genotype": new_genome.to_dict(),
+                "fitness": None,
+                "alive": True,
+            }
+            mutated.append(entry)
+ 
+            if was_mutated:
+                self._pending.append((entry, individual["parent_fitness"]))
+ 
+        return mutated
+ 
+    def adapt(self, population: list[dict]) -> list[dict]:
+        """Call this AFTER evaluate() has scored the new offspring."""
+        if not self._pending:
+            return population  # nothing was mutated this generation
+ 
+        successes = sum(
+            1 for entry, parent_fitness in self._pending
+            if entry["fitness"] is not None and entry["fitness"] < parent_fitness  # minimisation
+        )
+        success_rate = successes / len(self._pending)
+ 
+        if success_rate > self.target_success:
+            self.probability = min(self.max_probability, self.probability * self.factor)
+        elif success_rate < self.target_success:
+            self.probability = max(self.min_probability, self.probability / self.factor)
+        # exactly on target: leave probability unchanged
+ 
+        self._pending = []  # reset; nothing carries over to the next generation
+        return population
 
 def baseline_regenerate(population: list[dict]) -> list[dict]:
-    """Placeholder for random-search baseline."""
-    return population
+    """Random search: a completely fresh random population every generation,
+    at the same population size as the evolutionary variants (so the total
+    evaluation budget matches across variants).
+    """
+    return [create_random_individual() for _ in range(config.POP_SIZE)]
 
 
 # ---------------------------------------------------------------------------
@@ -210,11 +295,12 @@ def build_pipeline(variant: VariantName) -> list:
     """Return the ordered list of EA operations for each variant."""
     match variant:
         case "baseline":
-            return [baseline_regenerate, evaluate]
+            return [baseline_regenerate, evaluate], None
         case "static":
-            return [reproduction, mutate_static, evaluate, survivor_selection]
+            return [reproduction, mutate_static, evaluate, survivor_selection], None
         case "adaptive":
-            return [reproduction, mutate_adaptive, evaluate, survivor_selection]
+            adaptive = AdaptiveMutation()
+            return [reproduction, adaptive.mutate, evaluate, adaptive.adapt, survivor_selection], adaptive
         case _:
             raise ValueError(f"Unknown variant: {variant}")
 
@@ -222,23 +308,25 @@ def build_pipeline(variant: VariantName) -> list:
 # ---------------------------------------------------------------------------
 # 7. Experiment runner
 # ---------------------------------------------------------------------------
+def current_mutation_probability(variant: VariantName, adaptive: "AdaptiveMutation | None") -> float | None:
+    """What to log in the CSV for this generation's mutation probability."""
+    if variant == "static":
+        return config.STATIC_MUTATION_PROBABILITY
+    if variant == "adaptive":
+        return adaptive.probability if adaptive is not None else None
+    return None  # baseline: no mutation probability concept
+
 
 def run(variant: VariantName, seed: int) -> Path:
     """Run one experiment and store per-generation fitness summaries."""
     random.seed(seed)
 
-    population = [
-        {
-            "genotype": random_genome(max_modules=config.NUM_OF_MODULES).to_dict(),
-            "fitness": None,
-            "alive": True,
-        }
-        for _ in range(config.POP_SIZE)
-    ]
+    population = [create_random_individual() for _ in range(config.POP_SIZE)]
     population = evaluate(population)
-
-    pipeline = build_pipeline(variant)
+ 
+    pipeline, adaptive = build_pipeline(variant)
     rows: list[dict] = []
+    
     for generation in range(1, config.NUM_GENERATIONS + 1):
         for step in pipeline:
             population = step(population)
@@ -259,6 +347,7 @@ def run(variant: VariantName, seed: int) -> Path:
                 "best_fitness": round(best, 3),
                 "mean_fitness": round(mean,3),
                 "std_fitness": round(std, 3),
+                "mutation_probability": current_mutation_probability(variant, adaptive),
             }
         )
 
