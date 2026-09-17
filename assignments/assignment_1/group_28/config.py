@@ -8,6 +8,7 @@ RESULTS_DIR: Path = HERE / "results"
 NUM_OF_MODULES: int = 20
 MAX_TREE_DEPTH: int = 12
 MAX_TOTAL_MODULES: int = 2 * NUM_OF_MODULES
+MAX_MUTATION_ATTEMPTS: int = 20
 
 DEFAULT_SEED: int = 1
 VARIANTS: tuple[str, ...] = ("static", "adaptive", "baseline")
