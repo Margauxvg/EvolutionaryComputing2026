@@ -138,7 +138,7 @@ class AdaptiveMutation(MutationVariant):
         return weights_for_strength(self.strength)
 
     def _subtree_max_modules(self) -> int:
-        return config.NUM_OF_MODULES  )
+        return config.NUM_OF_MODULES
 
     def adapt(self, population: list[dict]) -> list[dict]:
         for entry, parent_fitness in self._pending:
