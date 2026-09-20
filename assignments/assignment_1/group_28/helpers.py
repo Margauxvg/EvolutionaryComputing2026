@@ -1,3 +1,4 @@
+import csv
 from pathlib import Path
 
 import config
@@ -13,3 +14,18 @@ def load_targets(target_dir: Path = config.TARGET_DIR) -> list:
 
 def make_individual(genotype: dict, **extra) -> dict:
     return {"genotype": genotype, "fitness": None, "alive": True, **extra}
+
+
+def variant_dir(variant: str, operator: str | None = None) -> Path:
+    path = config.RESULTS_DIR / variant
+    if operator is not None:
+        path = path / operator
+    return path
+
+
+def write_csv(rows: list[dict], output_path: Path, fieldnames: tuple[str, ...] | None = None) -> Path:
+    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames or list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return output_path

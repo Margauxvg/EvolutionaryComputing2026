@@ -1,10 +1,9 @@
-# Make sure the group_28 folder is in the assignments/assignment_1 folder, and that the project root is the current working directory.
-# Run from the project root, e.g.:
+# Run from the project root (after making sure that group_28 is under assignment1 folder), such as:
 #   cd C:(...)EvolutionaryComputing2026
-#   uv run assignments\assignment_1\group_28\run.py static --seed 1 (example)
+#   uv run assignments\assignment_1\group_28\run.py                 (all 5 default seeds)
+#   uv run assignments\assignment_1\group_28\run.py --seed 1        (just seed 1)
 
 import argparse
-import csv
 import random
 import statistics
 import sys
@@ -15,33 +14,19 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import config
 import ea
+from helpers import variant_dir, write_csv
 
 
-# ---------------------------------------------------------------------------
-# Experiment I/O
-# ---------------------------------------------------------------------------
-
-def run_dir(variant: str, seed: int) -> Path:
-    path = config.RESULTS_DIR / variant / f"seed_{seed}"
+def run_dir(variant: str, operator: str | None, seed: int) -> Path:
+    path = variant_dir(variant, operator) / f"seed_{seed}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def write_csv_summary(variant: str, seed: int, rows: list[dict]) -> Path:
-    folder = run_dir(variant, seed)
-    path = folder / config.RESULT_FILE_NAME
+def write_csv_summary(variant: str, operator: str | None, seed: int, rows: list[dict]) -> Path:
+    folder = run_dir(variant, operator, seed)
+    return write_csv(rows, folder / config.RESULT_FILE_NAME, fieldnames=config.CSV_COLUMNS)
 
-    with path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=config.CSV_COLUMNS)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    return path
-
-
-# ---------------------------------------------------------------------------
-# Fitness stats
-# ---------------------------------------------------------------------------
 
 def fitness_stats(population: list[dict]) -> tuple[float, float, float]:
     """(best, mean, std) of scored individuals' fitness; 0.0 each if none are scored yet."""
@@ -51,58 +36,85 @@ def fitness_stats(population: list[dict]) -> tuple[float, float, float]:
     return min(fitnesses), sum(fitnesses) / len(fitnesses), statistics.pstdev(fitnesses)
 
 
-# ---------------------------------------------------------------------------
-# Experiment runner
-# ---------------------------------------------------------------------------
+def make_row(generation: int, variant: str, operator: str | None, seed: int, population: list[dict], probability_used: float, mutation) -> dict:
+    best, mean, std = fitness_stats(population)
+    success_rate = getattr(mutation, "last_success_rate", None)
 
-def run(variant: str, seed: int) -> Path:
+    return {
+        "generation": generation,
+        "variant": variant,
+        "operator": operator or "",
+        "seed": seed,
+        "best_fitness": round(best, 3),
+        "mean_fitness": round(mean, 3),
+        "std_fitness": round(std, 3),
+        "mutation_probability": round(probability_used, 3),
+        "success_rate": "nan" if success_rate is None else round(success_rate, 4),
+        "num_scored_mutations": getattr(mutation, "last_num_scored", 0),
+        "num_mutated": getattr(mutation, "last_num_mutated", 0),
+    }
+
+
+def run(variant: str, operator: str | None, seed: int) -> Path:
     random.seed(seed)
 
     population = ea.evaluate(ea.init_population())
-    mutation = ea.make_mutation(variant)
+    mutation = ea.make_mutation(variant, operator)
 
-    rows: list[dict] = []
+    # Generation 0 is the evaluated initial population, before any variation, so every variant's curve starts from the same point.
+    rows: list[dict] = [
+        make_row(0, variant, operator, seed, population, getattr(mutation, "probability", 0.0), mutation)
+    ]
+
     for generation in range(1, config.NUM_GENERATIONS + 1):
+        # Get the probability used while the offspring was produced
+        probability_used = getattr(mutation, "probability", 0.0)
         population = ea.run_generation(variant, population, mutation)
-        best, mean, std = fitness_stats(population)
+        rows.append(make_row(generation, variant, operator, seed, population,
+                             probability_used, mutation))
 
-        rows.append(
-            {
-                "generation": generation,
-                "variant": variant,
-                "seed": seed,
-                "best_fitness": round(best, 3),
-                "mean_fitness": round(mean, 3),
-                "std_fitness": round(std, 3),
-                "mutation_probability": round(getattr(mutation, "probability", 0.0), 3),
-            }
-        )
-
-    result_path = write_csv_summary(variant, seed, rows)
-    print(f"{variant} seed={seed} -> {result_path}")
+    result_path = write_csv_summary(variant, operator, seed, rows)
+    print(f"{variant} operator={operator} seed={seed} -> {result_path}")
     return result_path
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def run_all(seeds: list[int]) -> None:
+    """Run all experiment combinations: static/adaptive x operator x seed, plus the random-search baseline (once
+    per seed, since it does not depend on the operator)."""
+    jobs: list[tuple[str, str | None]] = [
+        (variant, operator)
+        for variant in ("static", "adaptive")
+        for operator in config.MUTATION_OPERATORS
+    ]
+    jobs.append(("baseline", None))
+
+    total = len(jobs) * len(seeds)
+    started_all = time.perf_counter()
+
+    done = 0
+    for variant, operator in jobs:
+        for seed in seeds:
+            done += 1
+            started = time.perf_counter()
+            run(variant, operator, seed)
+            print(f"  [{done}/{total}] ({time.perf_counter() - started:.1f}s)")
+
+    print(f"Done: {total} runs in {time.perf_counter() - started_all:.1f}s")
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run an EA experiment for Assignment 1.")
-    parser.add_argument("variant", choices=list(config.VARIANTS), help="EA variant to run.")
+    parser = argparse.ArgumentParser(
+        description="Run the full EA experiment grid (static/adaptive x operator x seed, plus baseline)."
+    )
     parser.add_argument(
         "--seed",
         type=int,
         nargs="*",
-        default=[config.DEFAULT_SEED],
-        help="Seed or seeds to use. Defaults to a single seed: %(default)s.",
+        default=list(config.SEEDS),
+        help="Seed or seeds to use. Defaults to: %(default)s.",
     )
     args = parser.parse_args()
-
-    for seed in args.seed:
-        started = time.perf_counter()
-        run(args.variant, seed)
-        print(f"  ({time.perf_counter() - started:.1f}s)")
+    run_all(args.seed)
 
 
 if __name__ == "__main__":
