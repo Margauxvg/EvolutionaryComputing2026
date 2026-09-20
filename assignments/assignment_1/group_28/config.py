@@ -1,7 +1,6 @@
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
 TARGET_DIR: Path = HERE.parent / "target_bodies"
 RESULTS_DIR: Path = HERE / "results"
 RESULT_FILE_NAME: str = "fitness_overview.csv"
