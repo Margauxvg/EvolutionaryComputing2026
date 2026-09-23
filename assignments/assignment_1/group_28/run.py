@@ -1,190 +1,120 @@
-# Make sure the group_28 folder is in the assignments/assignment_1 folder, and that the project root is the current working directory.
-# Run from the project root, e.g.:
+# Run from the project root (after making sure that group_28 is under assignment1 folder), such as:
 #   cd C:(...)EvolutionaryComputing2026
-#   uv run assignments\assignment_1\group_28\run.py static --seed 1 (example)
+#   uv run assignments\assignment_1\group_28\run.py                 (all 5 default seeds)
+#   uv run assignments\assignment_1\group_28\run.py --seed 1        (just seed 1)
 
 import argparse
-import csv
 import random
 import statistics
+import sys
 import time
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import config
-from ariel.body_phenotypes.robogen_lite.decoders._blueprint import load_graph_from_json
-from ariel.ec.genotypes.tree.operators import random_tree as random_genome
-from ariel.ec.genotypes.tree.tree_genome import TreeGenome
-from tree_edit_distance import mean_plus_std_tree_edit_distance as fitness_function
+import ea
+from helpers import variant_dir, write_csv
 
-VariantName = config.VARIANTS
 
-# ---------------------------------------------------------------------------
-# 1. Configuration helpers
-# ---------------------------------------------------------------------------
-
-def run_dir(variant: VariantName, seed: int) -> Path:
-    """Return the folder used for one experiment run."""
-    path = config.RESULTS_DIR / variant / f"seed_{seed}"
+def run_dir(variant: str, operator: str | None, seed: int) -> Path:
+    path = variant_dir(variant, operator) / f"seed_{seed}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def write_csv_summary(variant: VariantName, seed: int, rows: list[dict]) -> Path:
-    """Store a CSV table with resutls for plotting. """
-    folder = run_dir(variant, seed)
-    path = folder / config.RESULT_FILE_NAME
-
-    with path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=config.CSV_COLUMNS)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    return path
+def write_csv_summary(variant: str, operator: str | None, seed: int, rows: list[dict]) -> Path:
+    folder = run_dir(variant, operator, seed)
+    return write_csv(rows, folder / config.RESULT_FILE_NAME, fieldnames=config.CSV_COLUMNS)
 
 
-# ---------------------------------------------------------------------------
-# 2. Targets and actual fitness metric
-# ---------------------------------------------------------------------------
-
-def load_targets(target_dir: Path = config.TARGET_DIR) -> list:
-    """Load the target robot bodies directly with the library loader."""
-    paths = sorted(target_dir.glob("*.json"))
-    if not paths:
-        raise FileNotFoundError(f"No target bodies found in {target_dir}")
-    return [load_graph_from_json(path) for path in paths]
-
-TARGETS = load_targets()
-
-# ---------------------------------------------------------------------------
-# 4. Shared EA steps
-# ---------------------------------------------------------------------------
-
-def evaluate(population: list[dict]) -> list[dict]:
-    """Evaluate each individual with the assignment fitness function."""
-    for individual in population:
-        if individual.get("fitness") is None:
-            genotype = individual["genotype"]
-            body = TreeGenome.from_dict(genotype).to_networkx()
-            individual["fitness"] = fitness_function(body, TARGETS)
-    return population
+def fitness_stats(population: list[dict]) -> tuple[float, float, float]:
+    """(best, mean, std) of scored individuals' fitness; 0.0 each if none are scored yet."""
+    fitnesses = [individual["fitness"] for individual in population if individual.get("fitness") is not None]
+    if not fitnesses:
+        return 0.0, 0.0, 0.0
+    return min(fitnesses), sum(fitnesses) / len(fitnesses), statistics.pstdev(fitnesses)
 
 
-def parent_selection(population: list[dict], tournament_size: int = config.TOURNAMENT_SIZE) -> list[dict]:
-    """Placeholder for tournament selection."""
-    return population
+def make_row(generation: int, variant: str, operator: str | None, seed: int, population: list[dict], probability_used: float, mutation) -> dict:
+    best, mean, std = fitness_stats(population)
+    success_rate = getattr(mutation, "last_success_rate", None)
+
+    return {
+        "generation": generation,
+        "variant": variant,
+        "operator": operator or "",
+        "seed": seed,
+        "best_fitness": round(best, 3),
+        "mean_fitness": round(mean, 3),
+        "std_fitness": round(std, 3),
+        "mutation_probability": round(probability_used, 3),
+        "success_rate": "nan" if success_rate is None else round(success_rate, 4),
+        "num_scored_mutations": getattr(mutation, "last_num_scored", 0),
+        "num_mutated": getattr(mutation, "last_num_mutated", 0),
+    }
 
 
-def crossover(population: list[dict], crossover_probability: float = config.CROSSOVER_PROBABILITY) -> list[dict]:
-    """Placeholder for crossover step."""
-    return population
-
-
-def survivor_selection(population: list[dict], target_population_size: int = config.POP_SIZE) -> list[dict]:
-    """Placeholder for truncation or elitist survivor selection."""
-    return population
-
-
-# ---------------------------------------------------------------------------
-# 5. Variants
-# ---------------------------------------------------------------------------
-
-def mutate_static(population: list[dict], mutation_probability: float = config.STATIC_MUTATION_PROBABILITY) -> list[dict]:
-    # TODO: Implement static mutation logic here
-    return population
-
-
-def mutate_adaptive(population: list[dict], mutation_probability: float = config.ADAPTIVE_MUTATION_PROBABILITY) -> list[dict]:
-    # TODO: Implement adaptive mutation logic here (the parameters might have to change based on the success rate of mutations)
-    return population
-
-
-def baseline_regenerate(population: list[dict]) -> list[dict]:
-    """Placeholder for random-search baseline."""
-    return population
-
-
-# ---------------------------------------------------------------------------
-# 6. Variant pipelines
-# ---------------------------------------------------------------------------
-
-def build_pipeline(variant: VariantName) -> list:
-    """Return the ordered list of EA operations for each variant."""
-    match variant:
-        case "baseline":
-            return [baseline_regenerate, evaluate]
-        case "static":
-            return [parent_selection, crossover, mutate_static, evaluate, survivor_selection]
-        case "adaptive":
-            return [parent_selection, crossover, mutate_adaptive, evaluate, survivor_selection]
-        case _:
-            raise ValueError(f"Unknown variant: {variant}")
-
-
-# ---------------------------------------------------------------------------
-# 7. Experiment runner
-# ---------------------------------------------------------------------------
-
-def run(variant: VariantName, seed: int) -> Path:
-    """Run one experiment and store per-generation fitness summaries."""
+def run(variant: str, operator: str | None, seed: int) -> Path:
     random.seed(seed)
 
-    population = [
-        {
-            "genotype": random_genome(max_modules=config.NUM_OF_MODULES).to_dict(),
-            "fitness": None,
-            "alive": True,
-        }
-        for _ in range(config.POP_SIZE)
+    population = ea.evaluate(ea.init_population())
+    mutation = ea.make_mutation(variant, operator)
+
+    # Generation 0 is the evaluated initial population, before any variation, so every variant's curve starts from the same point.
+    rows: list[dict] = [
+        make_row(0, variant, operator, seed, population, getattr(mutation, "probability", 0.0), mutation)
     ]
-    population = evaluate(population)
 
-    pipeline = build_pipeline(variant)
-    rows: list[dict] = []
     for generation in range(1, config.NUM_GENERATIONS + 1):
-        for step in pipeline:
-            population = step(population)
+        # Get the probability used while the offspring was produced
+        probability_used = getattr(mutation, "probability", 0.0)
+        population = ea.run_generation(variant, population, mutation)
+        rows.append(make_row(generation, variant, operator, seed, population,
+                             probability_used, mutation))
 
-        fitnesses = [individual["fitness"] for individual in population if individual.get("fitness") is not None]
-        if fitnesses:
-            best = min(fitnesses)
-            mean = sum(fitnesses) / len(fitnesses)
-            std = statistics.pstdev(fitnesses)
-        else:
-            best = mean = std = 0.0
-
-        rows.append(
-            {
-                "generation": generation,
-                "variant": variant,
-                "seed": seed,
-                "best_fitness": round(best, 3),
-                "mean_fitness": round(mean,3),
-                "std_fitness": round(std, 3),
-            }
-        )
-
-    result_path = write_csv_summary(variant, seed, rows)
-    print(f"{variant} seed={seed} -> {result_path}")
+    result_path = write_csv_summary(variant, operator, seed, rows)
+    print(f"{variant} operator={operator} seed={seed} -> {result_path}")
     return result_path
 
 
+def run_all(seeds: list[int]) -> None:
+    """Run all experiment combinations: static/adaptive x operator x seed, plus the random-search baseline (once
+    per seed, since it does not depend on the operator)."""
+    jobs: list[tuple[str, str | None]] = [
+        (variant, operator)
+        for variant in ("static", "adaptive")
+        for operator in config.MUTATION_OPERATORS
+    ]
+    jobs.append(("baseline", None))
+
+    total = len(jobs) * len(seeds)
+    started_all = time.perf_counter()
+
+    done = 0
+    for variant, operator in jobs:
+        for seed in seeds:
+            done += 1
+            started = time.perf_counter()
+            run(variant, operator, seed)
+            print(f"  [{done}/{total}] ({time.perf_counter() - started:.1f}s)")
+
+    print(f"Done: {total} runs in {time.perf_counter() - started_all:.1f}s")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run an EA experiment for Assignment 1.")
-    parser.add_argument("variant", choices=["static", "adaptive", "baseline"], help="EA variant to run.")
+    parser = argparse.ArgumentParser(
+        description="Run the full EA experiment grid (static/adaptive x operator x seed, plus baseline)."
+    )
     parser.add_argument(
         "--seed",
         type=int,
         nargs="*",
-        default=[config.DEFAULT_SEED],
-        help="Seed or seeds to use. Defaults to a single seed: %(default)s.",
+        default=list(config.SEEDS),
+        help="Seed or seeds to use. Defaults to: %(default)s.",
     )
     args = parser.parse_args()
-
-    seeds = args.seed
-    for seed in seeds:
-        started = time.perf_counter()
-        run(args.variant, seed)
-        print(f"  ({time.perf_counter() - started:.1f}s)")
+    run_all(args.seed)
 
 
 if __name__ == "__main__":
