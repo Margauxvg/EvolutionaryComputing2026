@@ -1,0 +1,80 @@
+% =====================================================================
+%  DRAFT SECTION -- preliminary measurements (Phase 1 feasibility probe)
+%  Goes in Methods, before the algorithm description: it is what the
+%  experimental design was derived FROM.
+%
+%  Numbers are from phase1_timing.py, run 25.09.2026 on the 15-core
+%  machine. UPDATE the genotype length once the controller inputs are
+%  final (see the \TODO), and re-run the probe if the architecture or
+%  SIM_DURATION changes.
+% =====================================================================
+
+\subsection{Preliminary measurements}
+\label{sec:preliminary}
+
+Unlike body-scoring tasks, where a candidate is evaluated in microseconds,
+every evaluation here requires a physics rollout. Two properties of that
+rollout had to be established before the experiment could be designed at
+all: how long one evaluation takes, which bounds the population size,
+generation count and number of independent runs we can afford; and
+whether an evaluation is deterministic, which decides whether the
+success rate driving the $1/5$ rule is a reliable signal or partly noise.
+Neither can be assumed, so we measured both before implementing the EA.
+
+We compiled the gecko body in \texttt{SimpleFlatWorld} and ran ten
+headless rollouts of $15$\,s simulated time with randomly drawn
+controller weights, timing them two ways: recompiling the world for every
+evaluation, as the provided template does, and compiling once and
+resetting the simulation state between evaluations. Determinism was
+tested by evaluating one fixed weight vector twice on the same compiled
+model, and once more on a freshly compiled one, to rule out state leaking
+between evaluations. Table~\ref{tab:preliminary} reports the results.
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabularx}{\columnwidth}{l|X}
+        Controller inputs (\texttt{len(data.qpos)}) & $15$ \\
+        Controller outputs (\texttt{model.nu}) & $8$ \\
+        Genotype length & \TODO{168} weights \\
+        Time per evaluation (model reused) & $0.168$\,s \\
+        Time per evaluation (recompiled) & $0.210$\,s \\
+        Speed relative to real time & $89\times$ \\
+        Fitness difference over repeated evaluations & $0.0$ \\
+    \end{tabularx}
+    \caption{Preliminary measurements, from ten rollouts of $15$\,s
+    simulated time. Timings are per evaluation on one core.}
+    \label{tab:preliminary}
+\end{table}
+
+Three findings shaped the rest of the design.
+
+First, at $0.168$\,s per evaluation a full experiment is inexpensive:
+three configurations over twenty independent runs of
+\TODO{50}~individuals for \TODO{300}~generations amounts to roughly
+$\TODO{900}\,000$ evaluations, or some \TODO{4}~hours of wall-clock time
+across \TODO{15} parallel processes. Because compute was not the binding
+constraint, we spent it on statistical power rather than on scale: we use
+\textbf{twenty independent runs per configuration} instead of the five
+required. At five runs per group the smallest attainable two-sided
+Mann--Whitney $p$-value is $0.0079$, reached only under complete
+separation, so the test bottoms out before it can resolve a moderate
+effect; at twenty runs per group that floor falls by several orders of
+magnitude.
+
+Second, evaluation is \emph{exactly} deterministic: repeated evaluations
+of identical weights returned bit-identical fitness, both on a reused and
+on a freshly compiled model. This matters for the research question
+rather than for convenience. The $1/5$ rule adapts the step size from the
+fraction of offspring that improve on their parent, and under a noisy
+fitness some of those improvements would be measurement error, biasing
+the signal that drives the controller. Determinism removes that concern
+entirely, makes repeated rollouts per individual unnecessary, and means
+each run is exactly reproducible from its seed.
+
+Third, reusing the compiled model saves only $1.25\times$, which tells us
+that almost all of the time is spent stepping the physics rather than
+building the model. We adopt the reuse because it is free, but we did not
+pursue further optimisation: the remaining cost is irreducible without
+shortening the simulation, which would change the task rather than speed
+it up.
