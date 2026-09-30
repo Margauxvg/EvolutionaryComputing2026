@@ -35,7 +35,11 @@ SIM_DURATION: float = 15.0
 #  Controller
 # --------------------------------------------------------------------------- #
 # controller.py reads these; defining them here makes this file authoritative.
-HIDDEN_SIZE: int = 6  # PROVISIONAL - inherited from the template, never justified
+HIDDEN_SIZE: int = 6
+# Settled by argument, not by sweep. 132 weights (22h: 14 inputs, 8 outputs, no bias vector) and
+# 113.6 evaluations per weight at the current budget. Inherited from the template and NOT tuned -
+# section 6 gives every reason to expect a sweep would return another null, so the compute went
+# into 20 seeds instead. Methods says exactly that. See stage1_findings.md section 10.
 CLOCK_FREQ: float = 1.0
 # Settled, as a null. 1-6 Hz across 3 seeds (18 runs): F = 0.95 between frequencies - less
 # variation than noise alone would give - and a paired permutation test gives p = 0.38. No choice
