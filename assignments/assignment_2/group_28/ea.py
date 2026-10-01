@@ -56,9 +56,12 @@ parent cannot be attributed to mutation if crossover also touched the child. Rem
 that to 50 and cuts the standard error of the measured success rate from 0.046 to 0.025 - against
 a target of 0.2, which is the only number the rule reads.
 
-It also puts the rule in its native setting. Rechenberg derived it for evolution strategies, where
-mutation IS the step distribution; A1 applied it to a discrete mutation probability in a GA and
-the report called that "an analogy rather than a transfer".
+It also lets the rule control the parameter it was derived for. Rechenberg's analysis is about
+the step size of Gaussian mutation, which is exactly sigma here; A1 applied the rule to a mutation
+probability, and its own report concluded "Our results call this analogy into question rather than confirm it." Be precise about
+what is NOT native: the rule was derived for the (1+1)-ES, a single parent and a single child.
+This EA has a population, tournament selection and elitism, so it is the native parameter inside
+an extended algorithm. That is a common extension, but it is an extension.
 
 SEEDING
 -------

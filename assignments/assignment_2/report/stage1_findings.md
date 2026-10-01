@@ -1,5 +1,28 @@
 # Stage 1 — what we measured, why, and what it fixes about the design
 
+> **BODY CHANGED 1 OCTOBER — read this before citing any number below.**
+>
+> Sections 1–8 were measured on `prebuilt_robots.gecko.gecko()`, the body `A2_template_2026.py`
+> imports: **8 hinges, 14 inputs, 132 weights**. The brief requires a body from the John Set, and
+> `report/body_pilot.md` chose `john_set.gecko()`: **6 hinges, 12 inputs, 108 weights**. ariel
+> ships two different functions called `gecko()` in two different modules. `simulate.py` now uses
+> the John Set one.
+>
+> **The arguments survive the switch; the numbers do not.** Still valid as written: section 9
+> (crossover — pure arithmetic about sample counts, body-independent), the 5-vs-20-seed power
+> reasoning, and determinism as a property of the engine rather than of a body.
+>
+> **Already re-measured on the John Set gecko (1 Oct):** genotype length and the HIDDEN_SIZE
+> table (§1, §10), determinism at all three levels (§2), the simulation length (§5).
+>
+> **Seconds per evaluation (§3), measured 1 Oct on the laptop:** 0.345 s for a single worker;
+> 19.6 evaluations/s with 16 workers (`group_28/parallelisation_plan.md`, speed test).
+>
+> **Still to re-measure before Methods cites them:** the walk gate (§4) and the 0.107 m
+> seed-to-seed sd behind `SEEDS = 20` (§6). Both fall out of the pilot.
+>
+> Each stale section is flagged inline below.
+
 Working record, not report prose. Every section is *what we did → why → how → result → what it
 changes about the experiment*, so the design decisions in Methods can be traced back to the
 measurement that forced them.
@@ -24,7 +47,7 @@ The Stage 1 gate is **closed**.
 
 ---
 
-## 1. Problem size
+## 1. Problem size — re-measured on the John Set gecko, 1 Oct
 
 **What we did.** Ran `controller.py`'s self-test, which builds the compiled model and reads the
 network's input and output sizes off it.
@@ -37,21 +60,23 @@ circulation and neither matched the code being run.
 compiled model rather than hardcoding it, so they follow whatever body `simulate.build_robot()`
 returns.
 
-**Result.**
+**Result.** `experiments.py hidden`, on `john_set.gecko()`:
 
 ```
-hinges (model.nu)   : 8
-network inputs      : 14      = 8 hinge angles + 6 extras
-genotype length     : 132     = 14 x 6 + 6 x 8
+hinges (model.nu)   : 6
+network inputs      : 12      = 6 hinge angles + 6 extras
+genotype length     : 108     = 12 x 6 + 6 x 6        (18h at HIDDEN_SIZE = h)
 ```
+
+Superseded: the template's `prebuilt_robots.gecko.gecko()` gave 8 hinges, 14 inputs, 132.
 
 The six extras are `sin(wt)`, `cos(wt)`, target direction (2 values, in the robot's own frame),
 scaled target distance, and a constant bias.
 
 **What it changes.**
 
-- The Methods table currently says `\TODO{168}`. **It is 132.** The 168 came from an early
-  estimate assuming ~20 inputs.
+- The Methods table currently says `\TODO{168}`. **It is 108.** The 168 came from an early
+  estimate assuming ~20 inputs; 132 was the template's 8-hinge body.
 - The 138 figure from 25 September was the template's bare-`qpos` controller (15 inputs, no
   clock, no target signal) and no longer describes anything we run.
 - The row labelled "Controller inputs (`len(data.qpos)`)" is mislabelled. The controller feeds
@@ -61,7 +86,7 @@ scaled target distance, and a constant bias.
 
 ---
 
-## 2. Determinism — closed at three levels
+## 2. Determinism — closed at three levels, on both bodies
 
 **What we did.** Evaluated one fixed genotype repeatedly and compared the fitnesses for **exact**
 equality, at three levels: a reused `Simulator`, a freshly compiled one in the same process, and
@@ -83,11 +108,11 @@ Windows has only `spawn`, so `spawn` is what was tested.
 tolerance: a 1e-16 difference is still a difference, and Methods should not claim bit-identical
 if it is only nearly so.
 
-**Result.**
+**Result.** On the John Set gecko, 1 October:
 
 ```
-genotype length 132, seed 1, 4 repeats per level
-reference fitness 1.9958052330735918
+genotype length 108, seed 1, 4 repeats per level
+reference fitness 2.1512138839134756
 
 level                         identical     max abs diff
 1 same Simulator                    yes        0.000e+00
@@ -95,9 +120,15 @@ level                         identical     max abs diff
 3 spawned process                   yes        0.000e+00
 ```
 
-Exact zeros, not small numbers. The reference fitness also matches the 1.995805 that
-`controller.py`'s self-test produced on 29 September through a different entry point, so the two
-independent paths agree to every printed digit.
+Exact zeros, not small numbers. The same check on the template's 8-hinge body on 30 September
+also gave three exact zeros (reference 1.9958052330735918, matching `controller.py`'s self-test
+through a different entry point). Determinism holding on two different bodies is good evidence
+it is a property of the engine and the control path, not of a particular morphology.
+
+A side observation, not a finding: a random controller on the John Set gecko ends 2.151 m from
+the target - *further* than the 2.0 m it started at - where the 8-hinge body's random controller
+barely moved (1.996). The John Set gecko moves more under random weights. Consistent with
+`body_pilot.md`, where it improved steadily on every seed.
 
 **What it changes.**
 
@@ -112,6 +143,8 @@ independent paths agree to every printed digit.
 ---
 
 ## 3. Evaluation cost — resolved
+
+> **Stale after the 1 Oct body change — re-measure: seconds per evaluation.**
 
 **What we did.** Timed single evaluations in two places, and separately timed the model-compile
 step on both machines.
@@ -160,6 +193,8 @@ change that makes a longer `SIM_DURATION` affordable (see §5).
 ---
 
 ## 4. The walk gate
+
+> **Stale after the 1 Oct body change — re-measure: all distances.**
 
 **What we did.** Ran a throwaway (5 + 10) evolution strategy for 20 generations and watched
 whether the distance to target fell.
@@ -217,7 +252,40 @@ long pilot curve, not from a guess.
 
 ---
 
-## 5. How far can it actually get?
+## 5. How far can it actually get? (re-measured on the John Set gecko, 1 Oct)
+
+**Re-measured.** We took the best controller from the sigma sweep (static σ=0.5, seed 3: 0.855 m
+at 15 s) and replayed it for up to 60 s. Command:
+`experiments.py duration --genotype results/sigma_best_pilot1/static_sigma0.5_seed3.npy`.
+
+| sim s | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 45 | 60 |
+|---|---|---|---|---|---|---|---|---|---|
+| distance m | 1.582 | 1.222 | **0.855** | 0.502 | 0.223 | **0.009** | 0.015 | 0.024 | 0.093 |
+
+- **It walks steadily** at about 7–8 cm/s in every 5 s slice up to 25 s.
+- **It reaches the target** at about 30 s, within 1 cm.
+- **Then it stays there.** It's within 10 cm for the remaining 30 s and doesn't overshoot or walk
+  off. That's good evidence the target-direction and distance inputs are actually used.
+
+Very different from the old 8-hinge body, whose best probe controller stopped at ~25 s, 1.45 m
+short.
+
+**Ignore the script's verdict (since fixed).** It printed *"sustains 3.2 cm/s over 60 s → not reachable"*. That
+average includes 30 s of standing at the target. The walking speed is ~7 cm/s (7.1 cm/s averaged up to 25 s). Reaching the
+target in 15 s would need ~13 cm/s, about twice as fast as this controller after 1,230
+evaluations.
+
+**What it changes: keep SIM_DURATION = 15 s, for a stronger reason than cost.** At 15 s even the
+best controller is still 0.86 m away, so fitness can't saturate at 0. Differences between
+variants stay visible through the whole run. With 30 s, or a closer target, the best runs would
+reach the target and pile up near 0 (a floor effect), hiding exactly the differences we want to
+measure, and every run would cost twice as much.
+
+Re-check after the pilot (μ = 50, 150 generations, far more evaluations): if the pilot's best
+distance at 15 s gets close to 0 (say < 0.3 m), the floor effect becomes a real risk.
+
+*The 29 Sep measurements below are kept for the record. They describe the template's 8-hinge
+gecko.*
 
 **What we did.** Scored `quick_best.npy` at durations from 5 to 60 seconds.
 
@@ -265,6 +333,8 @@ individual from the real pilot before the generation count is fixed.
 ---
 
 ## 6. Gait frequency — resolved, as a null
+
+> **Stale after the 1 Oct body change — re-measure: the 0.107 m sd; the null itself is unlikely to flip.**
 
 **What we did.** Ran the same 20-generation search at six values of `CLOCK_FREQ` (1–6 Hz) across
 three seeds. Eighteen runs.
@@ -421,6 +491,56 @@ and bury the run output. Wrap the forward pass in `np.errstate` or add a warning
 
 ---
 
+### 8b. Physics instability: a hang, found and fixed (1 Oct)
+
+**What happened.** The speed test stopped partway through run 13 with one Python process still
+busy. MuJoCo had written to `MUJOCO_LOG.TXT`:
+*"Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 12.0820."*
+
+**Why it hung.** One controller drove the physics unstable at 12.08 s. By default MuJoCo then
+resets the simulation, which puts `data.time` back to 0. ariel's `simple_runner` steps until
+`data.time` reaches the duration. The controller is deterministic, so it replays the same motion,
+goes unstable at 12.08 s again, resets again, and so on forever. The NaN guard never fired,
+because the reset happened before the controller saw a bad value.
+
+**How rare.** It didn't occur once in the sigma sweep's 22,140 evaluations, and the same seed ran
+fine on Linux. So it depends on last-digit differences between machines. But one hang blocks a
+worker forever, and with hundreds of thousands of evaluations in the final experiment it would
+very likely happen at least once.
+
+**The fix (`simulate.py`).** Two changes:
+- The automatic reset is switched off when the model is compiled
+  (`mjDSBL_AUTORESET`). An unstable state now turns into NaN, the existing NaN guard in the
+  control callback catches it, and the controller gets `WORST_FITNESS`, like any failed one.
+- When that guard fires, the callback puts back a finite state and moves the clock to the end,
+  so the rollout stops after its current batch of steps instead of stepping a NaN state for the
+  rest of the 15 s.
+
+**Checked** in a copy of the setup (same ariel source, MuJoCo 3.8.0):
+- A forced instability, which hung forever before the fix, now ends in under 0.1 s with fitness
+  100 m.
+- 20 normal genotypes give exactly the same fitness with the old and new behaviour (max
+  difference 0.0), and the seed-1 reference is unchanged. Determinism and all earlier results
+  stand.
+- A `Simulator` that has just evaluated an unstable controller evaluates the next one normally.
+- **Confirmed in a real run on Windows:** in the speed test, the same seed-13 controller went
+  unstable at exactly t = 12.0820 s in all five worker settings (2, 4, 8, 12, 16). It's logged
+  five times in `MUJOCO_LOG.TXT`, and every setting finished. The fix works, and the instability
+  is reproducible regardless of how many workers run.
+- **Confirmed on the Windows laptop after the fix:** `experiments.py determ` gives three exact
+  zeros and the same reference fitness as before the fix, `2.1512138839134756`.
+
+**Side effect.** In the single step where the physics goes bad, MuJoCo prints about 1,900
+`mesh_support could not find support vertex` warnings, to the terminal and to `MUJOCO_LOG.TXT`.
+That's harmless and only happens on these rare evaluations. It's also a useful signal: if
+`MUJOCO_LOG.TXT` grows during a run, some controllers went unstable. They're counted in the
+`num_nan` column ("controllers that failed").
+
+**Methods** now says a controller gets 100 m if it produces invalid outputs *or makes the
+simulation unstable*.
+
+---
+
 ## 9. Design decision: no crossover
 
 **What we did.** Removed crossover. Mutation is now the EA's only variation operator.
@@ -465,11 +585,17 @@ It also removes a reproducibility trap. `Crossover.uniform` was the only thing d
 ariel's package-level RNG, so `ariel.ec.set_seed()` had to be called or all 20 "independent" seeds
 would have recombined identically. Nothing we call now reads global random state.
 
-And it tightens the framing. Rechenberg derived the 1/5 rule for evolution strategies, where
-mutation *is* the step distribution. A1 applied it to a discrete mutation probability inside a GA
-and its own report called that "an analogy rather than a transfer of its underlying analysis". A
-mutation-only population-based ES is the rule's native setting, so A2 tests it where it was
-derived rather than by analogy.
+And it tightens the framing. Rechenberg derived the 1/5 rule to control the step size of
+Gaussian mutation; sigma here is exactly that. A1 applied it to a mutation probability inside a
+GA, its own report concluded "Our results call this analogy into question rather than confirm it." and the A1 marker deducted for
+the step-size/probability conflation in the Introduction. A2 removes that conflation.
+
+Be careful not to overclaim in the other direction. The rule was derived for the **(1+1)-ES** —
+one parent, one child. This EA has a population of 50, tournament selection and elitism. So the
+honest phrasing is *the rule's native parameter inside a population-based extension*, not "the
+rule's native setting". Population-based use of success-based step-size control is common, but it
+is an extension, and the success definition (each child against its own parent) is our choice,
+which Methods must state as one.
 
 **Signed off.** Confirmed with the course staff on 30 September that dropping crossover is
 acceptable for this assignment. That closes the one external risk in this decision - the argument
@@ -493,22 +619,23 @@ is one optional decision and the pilot - and the pilot is blocked on code, not o
 decide it. Three seeds cannot reach significance - the smallest attainable 3 v 3 Mann-Whitney p is
 0.100 - so a sweep cannot *prove* anything here either. Treat it as section 6 treated
 `CLOCK_FREQ`: a nuisance parameter where the only question is whether a choice is catastrophic.
-There is also a standing argument against it that costs no compute at all: appending `qvel` takes
-the input vector from 14 to 22 and the genotype from 132 to 180, a 36% larger search space for
-the same evaluation budget. Default to leaving it out unless a run says otherwise.
+There is also a standing argument against it that costs no compute at all: appending hinge velocities
+takes the input vector from 12 to 18 and the genotype from 108 to 144 on the John Set gecko, a 33%
+larger search space for the same evaluation budget. Default to leaving it out unless a run says otherwise.
 
-**`HIDDEN_SIZE = 6`** is settled by argument rather than by sweep, and the number is now
-measured. `experiments.py hidden`: 132 weights (22h, from 14 inputs and 8 outputs with no bias
-vector) and 113.6 evaluations per weight at the provisional 15 000-evaluation budget.
+**`HIDDEN_SIZE = 6`** is settled by argument rather than by sweep, and the number is measured on
+the John Set gecko (1 Oct): `experiments.py hidden` gives 108 weights (18h, from 12 inputs and 6
+outputs with no bias vector) and 138.9 evaluations per weight at the provisional 15 000-evaluation
+budget.
 
 | HIDDEN_SIZE | genotype | evals per weight |
 |---|---|---|
-| 2 | 44 | 340.9 |
-| 4 | 88 | 170.5 |
-| **6** | **132** | **113.6** |
-| 8 | 176 | 85.2 |
-| 12 | 264 | 56.8 |
-| 16 | 352 | 42.6 |
+| 2 | 36 | 416.7 |
+| 4 | 72 | 208.3 |
+| **6** | **108** | **138.9** |
+| 8 | 144 | 104.2 |
+| 12 | 216 | 69.4 |
+| 16 | 288 | 52.1 |
 
 Methods states the count, states that the value was inherited from the template and not tuned,
 and says why - the compute went into 20 seeds rather than a network-size sweep that section 6
@@ -528,6 +655,112 @@ runner. No further experiment shortens that path.
 
 ---
 
+## 11. Mutation step-size sweep (the real EA, John Set gecko)
+
+**What we did.** Ran the real EA (`ea.py` + `mutation.py`) for both variants from σ₀ ∈ {0.1, 0.3,
+0.5}, 3 seeds each: 18 runs, population 30, 40 generations, 1,230 evaluations per run (the body
+pilot's budget). It's the first end-to-end run of the EA on this body. `experiments.py sigma`, 1 Oct.
+
+**Why.** Two reasons:
+- The fixed σ is the control. A badly chosen control makes the 1/5 rule look good without
+  telling us anything.
+- We wanted to know whether the rule ends up in the same place whatever σ it starts from.
+
+**How.** Saved as `results/sigma_sweep_pilot1.csv` and `results/sigma_best_pilot1/`. All six
+configurations at a given seed started from the identical population (gen-0 best 1.877 / 1.920 /
+1.845 for seeds 1 / 2 / 3), so the pairing works.
+
+**Result 1: final distance (m).** Means over 3 seeds:
+
+| σ₀ | static | adaptive |
+|---|---|---|
+| 0.1 | 1.317 ± 0.062 | 1.397 ± 0.231 |
+| 0.3 | 1.329 ± 0.208 | 1.414 ± 0.258 |
+| 0.5 | 1.232 ± 0.338 | 1.225 ± 0.131 |
+
+Every gap is inside the seed-to-seed spread (~0.2 m). Static 0.5 has the best mean, but because of
+one seed (0.855 m): the same lottery pattern that ruled out spider_8. Pooled curves are almost
+identical up to generation 10, and static is slightly ahead at generation 20 (1.45 vs 1.54).
+There's no early advantage for adaptive (H1) at this scale.
+
+**Result 2: the success rate sits at 1/5 whatever σ is.** This is the most important finding.
+
+| | g1 | g10 | g20 | g30 | g40 |
+|---|---|---|---|---|---|
+| static σ=0.1 | 0.28 | 0.19 | 0.19 | 0.20 | 0.23 |
+| static σ=0.3 | 0.20 | 0.22 | 0.21 | 0.20 | 0.19 |
+| static σ=0.5 | 0.18 | 0.21 | 0.20 | 0.21 | 0.20 |
+
+Five times the step size, and the same success rate. So the rule's input sits on its own threshold
+and carries almost no information about whether σ is too large or too small. Adaptive σ then
+wanders: final values ranged **0.05 to 2.0 within the same σ₀**, and σ hit the 2.0 cap in **5 of
+9** adaptive runs. The likely cause is the population setting flagged in the Intro: each child is
+compared with its own parent, and with tournament selection many parents are mediocre, so roughly
+one child in five beats its parent whatever the step size. In the (1+1)-ES the rule was derived
+for, the success rate depends strongly on σ.
+
+This parallels A1, where the static variant's success rate followed the adaptive one *"almost
+exactly"* and the collapse was *"a property of the search rather than something the controller
+caused"*. It's a pilot (3 seeds, 40 generations), so the final experiment has to confirm it. If it
+holds, this is the mechanism the second half of the RQ is asking about.
+
+**Correction to the sweep's own printout:** it said the rule *"pulls different starting points
+together: evidence it replaces the tuning step"*. That overstates it. The means of final σ differ
+by 1.9× against 5× at the start, but within one σ₀ final σ varies 30×. σ forgets its starting
+point because it random-walks, not because it converges to a good value. How much final distance
+depends on σ₀ was 0.10 m for static and 0.19 m for adaptive, both inside the noise. No evidence yet
+that the rule replaces tuning. The printout has since been fixed: it now compares the spread between seeds of
+the same σ₀ with the spread between starting values, and adds a check of whether the static
+success rate depends on σ at all. On this data it now prints *"it wanders. That is NOT evidence
+that the rule replaces tuning"*.
+
+**Result 3: still no plateau, and long flat stretches.**
+- **80% of generations** brought no improvement in best distance (old body: 77%).
+- The longest flat streaks were 26 and 27 generations.
+- Mean curves were still falling 0.05–0.1 m between generations 30 and 40.
+
+The draft's per-run stopping rule (less than 0.01 m improvement over 20 generations) would have
+stopped two runs. One of them (adaptive σ₀=0.5, seed 1) was stopped at generation 25
+at 1.582 m and then improved by **0.489 m**, its biggest gain, to 1.093 m. That's direct evidence
+for a fixed budget over per-run plateau stopping (decision D6).
+
+**Result 4: other observations.**
+- Diversity: static σ=0.1 *lost* diversity (genotype spread 0.49 → 0.22), while adaptive runs
+  gained a lot (→ 2.0–3.3) because of the large σ values.
+- No invalid (NaN) controllers in 22,140 evaluations.
+
+**Result 5: timing.**
+- 15 workers on 8 cores: about 0.95 s per evaluation per process, about 15.8 evaluations/s in
+  total.
+- The last three runs, alone on the machine, still took about 0.63 s per evaluation each, roughly
+  single-process throughput.
+- 18 jobs on 15 workers meant the second round used only 3 workers. The whole sweep took 34.9 min.
+- The speed test (parallelisation plan, step 2) has to explain the slow tail: heat, power mode,
+  or something else running.
+
+**What it changes.**
+
+- **D2, fixed σ.** The pilot can't separate 0.1–0.5. Recommendation: keep **0.3**, by argument:
+  - It's the middle of a flat range.
+  - 0.1 was already losing diversity at 40 generations, a premature-convergence risk in longer
+    runs.
+  - 0.5's lead rests on one seed (the spider argument).
+  - Every earlier probe used 0.3.
+  - Draft Methods sentence: *"Fixed σ ∈ {0.1, 0.3, 0.5} gave final distances within the
+    seed-to-seed spread (3 seeds, 1,230 evaluations), so we kept σ = 0.3, the middle of this
+    range."*
+- **D6, stopping rule:** fixed budget. Result 3 is the evidence.
+- **Run length:** at least 150–200 generations. To be fixed by the pilot at μ = 50.
+- **σ_max = 2.0 is not "just a guard".** It was reached in more than half the adaptive runs. Report
+  that, and decide whether it stays at 2.0 (it bounds how far the random walk can go).
+- **Budget.** At about 15.8 evaluations/s at full load, 60 runs × 50 × (G+1) evaluations take
+  ~5.3 h for G = 100, ~10.6 h for G = 200 and ~16 h for G = 300. The earlier estimate in the
+  parallelisation plan (6–7 h for G = 200) was too optimistic. This puts pressure on D5 (20 vs 10
+  seeds) and D1 (μ).
+- **H2 wording:** supported by 80% flat generations on this body. The Intro can keep it as written.
+
+---
+
 ## Provenance
 
 | Date | Machine | Script | What it produced |
@@ -540,7 +773,13 @@ runner. No further experiment shortens that path.
 | 29 Sep | laptop | `experiments.py clock --freqs 1 2 3 4 5 6 --seeds 1 2 3` | the 18-run sweep, §6 |
 | 29 Sep | - | arithmetic, no run | the crossover decision, §9 |
 | 30 Sep | laptop | `experiments.py hidden` | `results/hidden_size.csv`, §10 |
-| 30 Sep | laptop | `experiments.py determ` | `results/determinism.csv`, §2 |
+| 30 Sep | laptop | `experiments.py determ` | `results/determinism.csv`, §2 (8-hinge body) |
+| 1 Oct | laptop | `experiments.py hidden` | §1, §10 on `john_set.gecko` |
+| 1 Oct | laptop | `experiments.py determ` | §2 on `john_set.gecko` |
+| 1 Oct | laptop, 15 workers | `experiments.py sigma` (defaults) | §11; `results/sigma_sweep_pilot1.csv` |
+| 1 Oct | laptop | `experiments.py duration --genotype results/sigma_best_pilot1/static_sigma0.5_seed3.npy` | §5 on `john_set.gecko`; `results/duration.csv` |
+| 1 Oct | laptop | speed test (`sigma --workers 1`, seeds 1–12 finished) | 0.345 s/evaluation single-worker; the hang in §8b |
+| 1 Oct | laptop | speed test, `--workers 2 4 8 12 16` (after the fix) | speedups up to 6.7× (19.6 evals/s at 16); §8b confirmed 5/5 |
 | 29 Sep | laptop | `experiments.py qvel` | `results/qvel.csv` |
 | 29 Sep | laptop | `experiments.py nan` | `results/nan_guard.csv` |
 | 29 Sep | laptop | `experiments.py cache` | `results/cache.csv` |

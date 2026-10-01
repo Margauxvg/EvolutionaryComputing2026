@@ -13,6 +13,7 @@ Run from the project root:
     uv run assignments/assignment_2/group_28/experiments.py cache
     uv run assignments/assignment_2/group_28/experiments.py determ
     uv run assignments/assignment_2/group_28/experiments.py hidden
+    uv run assignments/assignment_2/group_28/experiments.py sigma
 
 WHAT EACH ONE IS FOR
 --------------------
@@ -30,6 +31,9 @@ WHAT EACH ONE IS FOR
               worker disagrees with the parent the 20 seeds are not comparable runs.
     hidden    Prints genotype length against HIDDEN_SIZE. No simulation - this is the
               parameter-count argument for Methods, not a sweep.
+    sigma     Which fixed sigma should the static variant use, and does the 1/5 rule end up
+              in the same place whatever sigma it starts from? Runs the REAL EA (ea.py and
+              mutation.py), not the throwaway ES the other probes use.
 
 Results print as a table and are appended to results/<name>.csv so they can be cited.
 """
@@ -38,6 +42,7 @@ Results print as a table and are appended to results/<name>.csv so they can be c
 import argparse
 import csv
 import multiprocessing as mp
+import os
 import statistics
 import time
 from pathlib import Path
@@ -49,6 +54,8 @@ import numpy.typing as npt
 
 import config
 import controller
+import ea
+from mutation import AdaptiveMutation, StaticMutation
 from simulate import Simulator
 
 HERE = Path(__file__).resolve().parent
@@ -111,11 +118,13 @@ def experiment_duration(args: argparse.Namespace) -> None:
     row is literally "what fitness would be if SIM_DURATION were this", which is the
     decision we are trying to make.
 
-    Read the speed column, not the distance column. Roughly constant speed means the gait
-    is sustained and 15 s is just a short window - lengthening it, or moving the target
-    closer, would give the EA a reachable goal. Speed decaying towards zero means the
-    controller lurches once and stalls, which is a controller problem and no amount of
-    simulation time fixes it.
+    Read the speed column, not the distance column. Roughly constant speed means the gait is
+    sustained. Speed decaying towards zero long before the target means the controller lurches
+    once and stalls, which is a controller problem that no amount of simulation time fixes.
+
+    Reaching the target inside the window is NOT the goal. If good controllers already reach it
+    within SIM_DURATION, fitness piles up near 0 and stops separating good from better (a floor
+    effect). A window the best controller cannot quite finish keeps the comparison informative.
     """
     path = Path(args.genotype)
     if not path.is_absolute():
@@ -156,12 +165,39 @@ def experiment_duration(args: argparse.Namespace) -> None:
         previous_distance, previous_duration = distance, float(duration)
 
     needed = 100.0 * start_distance / config.SIM_DURATION
-    final = rows[-1]["speed_overall_cm_s"]
-    print(f"\nreaching the target within SIM_DURATION={config.SIM_DURATION:.0f}s needs {needed:.1f} cm/s")
-    print(f"this controller sustains {final:.1f} cm/s over {durations[-1]} s")
-    if final < needed * 0.5:
-        print("-> the target is not reachable in the current window. Decide: longer "
-              "SIM_DURATION, or a closer target.")
+
+    # Speed WHILE WALKING: up to the closest approach, not over the whole replay. An earlier
+    # version averaged over all 60 s, which counted the time a controller spends standing at
+    # the target after arriving - and reported a robot walking at ~7.5 cm/s as "3.2 cm/s".
+    closest = min(rows, key=lambda r: r["distance_m"])
+    walking = 100.0 * (start_distance - closest["distance_m"]) / closest["sim_duration_s"]
+    reached = [r for r in rows if r["distance_m"] <= args.reach]
+    in_window = [r for r in rows if r["sim_duration_s"] <= config.SIM_DURATION]
+    at_window = in_window[-1] if in_window else None
+
+    print(f"\nclosest approach : {closest['distance_m']:.3f} m at {closest['sim_duration_s']} s")
+    print(f"walking speed    : {walking:.1f} cm/s (up to the closest approach)")
+    print(f"needed to reach the target within SIM_DURATION={config.SIM_DURATION:.0f}s: {needed:.1f} cm/s")
+    if reached:
+        print(f"reaches the target (within {args.reach} m) at {reached[0]['sim_duration_s']} s")
+
+    if at_window is None:
+        print("-> no duration in this replay is inside SIM_DURATION; use a smaller --step.")
+    elif at_window["distance_m"] <= args.reach:
+        print(f"-> this controller already reaches the target within {at_window['sim_duration_s']} s. "
+              "Fitness can saturate at ~0,\n   which hides differences between good controllers "
+              "(a floor effect). Consider a farther target.")
+    elif at_window["distance_m"] < args.floor:
+        print(f"-> {at_window['distance_m']:.2f} m from the target at {at_window['sim_duration_s']} s: "
+              "close enough that better controllers may\n   saturate at ~0 (floor-effect risk). "
+              "Re-check with the best controller of a longer run.")
+    elif not reached and closest["sim_duration_s"] < durations[-1]:
+        print(f"-> stalls {closest['distance_m']:.2f} m short after {closest['sim_duration_s']} s: "
+              "a controller problem that more simulation\n   time does not fix.")
+    else:
+        print(f"-> still {at_window['distance_m']:.2f} m away at {at_window['sim_duration_s']} s, "
+              "so fitness cannot saturate at 0 and keeps\n   separating good controllers from "
+              "better ones. The current window is fine.")
     write_csv("duration", rows)
 
 
@@ -530,6 +566,263 @@ def experiment_hidden(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  sigma - which fixed sigma, and does the 1/5 rule care where it starts?
+# --------------------------------------------------------------------------- #
+def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
+    """One full run of the real EA. Module level, so a spawned worker can pickle it.
+
+    Unlike `search`, this is the algorithm Methods describes: ea.run_generation with
+    tournament selection, elitism and mutation.py's Static/AdaptiveMutation. So it is also the
+    first end-to-end test of ea.py and mutation.py together.
+
+    Returns one row per generation, generation 0 being the initial population.
+    """
+    variant, sigma0, seed, pop_size, generations = job
+
+    # survivor_selection reads config.POP_SIZE when it is called, so the pilot's smaller
+    # population has to be patched in HERE, inside the worker. A spawned process imports
+    # config afresh and would never see a patch made in the parent.
+    config.POP_SIZE = pop_size
+
+    rng = np.random.default_rng(seed)
+
+    # The initial population is drawn FIRST, before anything else touches the generator, so
+    # every variant and every sigma0 starts from the same population at a given seed.
+    # `size` is passed explicitly: init_population's default was bound to config.POP_SIZE
+    # when ea.py was imported, before the patch above.
+    started = time.perf_counter()
+    population = ea.evaluate(ea.init_population(rng, size=pop_size))
+
+    if variant == "static":
+        mutation = StaticMutation(rng, sigma=sigma0)
+    else:
+        mutation = AdaptiveMutation(rng, initial_sigma=sigma0)
+
+    def row(generation: int, sigma: float | None, evaluations: int) -> dict:
+        best, mean, std = ea.fitness_stats(population)
+        return {
+            "generation": generation,
+            "variant": variant,
+            "sigma0": sigma0,
+            "seed": seed,
+            "best_fitness": round(best, 6),
+            "mean_fitness": round(mean, 6),
+            "std_fitness": round(std, 6),
+            "sigma": sigma,
+            "success_rate": mutation.last_success_rate,
+            "num_scored_mutations": mutation.last_num_scored,
+            "num_mutated": mutation.last_num_mutated,
+            "mean_genotype_spread": round(ea.genotype_spread(population), 6),
+            "num_nan": ea.count_nan(population),
+            "evaluations": evaluations,
+            "seconds": round(time.perf_counter() - started, 1),
+        }
+
+    evaluations = pop_size
+    rows = [row(0, None, evaluations)]
+
+    for generation in range(1, generations + 1):
+        # Read BEFORE the offspring are made, so the logged sigma is the one that made them.
+        sigma_used = mutation.sigma
+        population = ea.run_generation(variant, population, mutation, rng)
+        evaluations += pop_size
+        rows.append(row(generation, sigma_used, evaluations))
+
+    # Keep each run's best controller, so the simulation-length check (`duration --genotype`)
+    # and any video for the report can use a controller evolved on the John Set gecko.
+    best = min(population, key=lambda ind: ind.fitness_)
+    out = RESULTS_DIR / "sigma_best"
+    out.mkdir(parents=True, exist_ok=True)
+    np.save(out / f"{variant}_sigma{sigma0}_seed{seed}.npy",
+            np.asarray(best.genotype, dtype=np.float64))
+
+    return rows
+
+
+def experiment_sigma(args: argparse.Namespace) -> None:
+    """Static AND adaptive at several sigma values, a few seeds each.
+
+    Two questions, one sweep:
+
+    1. WHICH FIXED SIGMA. The static variant is the control, and a badly chosen control makes
+       the 1/5 rule look good for free. The fair comparison is the rule against a fixed sigma
+       that was itself chosen by experiment - and A1's marker singled out exactly this kind of
+       pilot ("what you did for parameter selection is exactly what we are looking for").
+
+    2. DOES THE STARTING POINT MATTER TO THE RULE. If the adaptive variant ends in a similar
+       place whatever sigma it starts from, the rule has replaced a tuning step. That is the
+       standard argument for parameter control, and part two of the research question.
+
+    Pilot scale by default: population 30 for 40 generations is 1,230 evaluations per run,
+    the same budget as the body pilot, so the two are directly comparable. Three seeds can
+    show a direction, not prove one - the summary says so where it matters.
+    """
+    jobs = [
+        (variant, sigma0, seed, args.pop, args.generations)
+        for seed in args.seeds
+        for sigma0 in args.sigmas
+        for variant in args.variants
+    ]
+    workers = max(1, min(args.workers, len(jobs)))
+    per_run = args.pop * (args.generations + 1)
+    print(f"{len(jobs)} runs: variants {args.variants}, sigma {args.sigmas}, seeds {args.seeds}")
+    print(f"population {args.pop}, {args.generations} generations, {per_run} evaluations per run")
+    print(f"{workers} worker process(es)\n")
+
+    rows: list[dict] = []
+    started = time.perf_counter()
+
+    def report(done: int, run_rows: list[dict]) -> None:
+        last = run_rows[-1]
+        sigma_note = (
+            f"final sigma {last['sigma']:.3f}" if last["variant"] == "adaptive" else ""
+        )
+        print(f"[{done:>3}/{len(jobs)}] {last['variant']:<8} sigma0 {last['sigma0']:<5} "
+              f"seed {last['seed']:<3} best {last['best_fitness']:.3f} m  "
+              f"{last['seconds']:>6.0f} s  {sigma_note}", flush=True)
+
+    if workers == 1:
+        for done, job in enumerate(jobs, start=1):
+            run_rows = _sigma_run(job)
+            rows.extend(run_rows)
+            report(done, run_rows)
+    else:
+        # spawn, because that is all Windows has and it is what `determ` verified.
+        with mp.get_context("spawn").Pool(processes=workers) as pool:
+            for done, run_rows in enumerate(pool.imap_unordered(_sigma_run, jobs), start=1):
+                rows.extend(run_rows)
+                report(done, run_rows)
+
+    print(f"\ntotal wall time {(time.perf_counter() - started) / 60:.1f} min")
+    rows.sort(key=lambda r: (r["variant"], r["sigma0"], r["seed"], r["generation"]))
+    write_csv("sigma_sweep", rows)
+    _summarise_sigma(rows, args)
+
+
+def _summarise_sigma(rows: list[dict], args: argparse.Namespace) -> None:
+    """Final best per configuration, and what the adaptive sigma did."""
+    last = {
+        (r["variant"], r["sigma0"], r["seed"]): r
+        for r in rows if r["generation"] == args.generations
+    }
+
+    def finals(variant: str, sigma0: float) -> list[float]:
+        return [last[(variant, sigma0, s)]["best_fitness"] for s in args.seeds
+                if (variant, sigma0, s) in last]
+
+    def mean_sd(values: list[float]) -> tuple[float, float]:
+        return statistics.fmean(values), (statistics.stdev(values) if len(values) > 1 else 0.0)
+
+    print("\nFINAL BEST DISTANCE (m, lower is better)\n")
+    print(f"{'variant':<9} {'sigma0':>7} {'mean':>7} {'sd':>7}   per seed")
+    for variant in args.variants:
+        for sigma0 in args.sigmas:
+            values = finals(variant, sigma0)
+            m, sd = mean_sd(values)
+            print(f"{variant:<9} {sigma0:>7} {m:>7.3f} {sd:>7.3f}   "
+                  + "  ".join(f"{v:.3f}" for v in values))
+
+    # ---- question 1: which fixed sigma
+    if "static" in args.variants and len(args.sigmas) > 1:
+        ranked = sorted(args.sigmas, key=lambda s: statistics.fmean(finals("static", s)))
+        best, runner_up = ranked[0], ranked[1]
+        gap = statistics.fmean(finals("static", runner_up)) - statistics.fmean(finals("static", best))
+        spread = statistics.fmean(mean_sd(finals("static", s))[1] for s in args.sigmas)
+        print(f"\n1. WHICH FIXED SIGMA: lowest mean at sigma = {best}, "
+              f"{gap:.3f} m ahead of sigma = {runner_up}")
+        print(f"   typical spread between seeds at one sigma: {spread:.3f} m")
+        if len(args.seeds) < 2:
+            print("   -> one seed has no spread to compare against: run at least 2 seeds.")
+        elif gap < spread:
+            print("   -> the gap is inside the noise. Do not pick a winner on this alone; choose")
+            print("      by argument and say in Methods that the pilot could not separate them.")
+        else:
+            print(f"   -> the gap is larger than the seed-to-seed spread: sigma = {best} is the")
+            print("      candidate for STATIC_SIGMA. With 3 seeds that is a direction, not a test.")
+
+    # ---- question 2: does the rule care where it starts
+    if "adaptive" in args.variants and len(args.sigmas) > 1:
+        print("\n2. WHAT THE 1/5 RULE DID WITH EACH STARTING SIGMA\n")
+        print(f"{'sigma0':>7} {'final sigma (geo. mean)':>24} {'range between seeds':>21} "
+              f"{'success, last 5 gens':>21}")
+        geo_means, within = {}, []
+        for sigma0 in args.sigmas:
+            runs = [r for r in rows if r["variant"] == "adaptive" and r["sigma0"] == sigma0]
+            ends = [r["sigma"] for r in runs if r["generation"] == args.generations]
+            late = [r["success_rate"] for r in runs
+                    if r["generation"] > args.generations - 5 and r["success_rate"] is not None]
+            # Geometric mean, because the rule changes sigma by a FACTOR each generation.
+            geo_means[sigma0] = float(np.exp(np.mean(np.log(ends))))
+            within.append(max(ends) / min(ends))
+            print(f"{sigma0:>7} {geo_means[sigma0]:>24.4f} "
+                  f"{min(ends):>10.4f}-{max(ends):<10.4f} "
+                  f"{(statistics.fmean(late) if late else float('nan')):>21.3f}")
+
+        start_ratio = max(args.sigmas) / min(args.sigmas)
+        between_ratio = max(geo_means.values()) / min(geo_means.values())
+        within_ratio = max(within)
+        print(f"\n   starting sigmas differ by {start_ratio:.1f}x")
+        print(f"   final sigmas differ by {between_ratio:.1f}x between starting values, "
+              f"and by up to {within_ratio:.1f}x between seeds of the SAME start")
+
+        # Comparing only the means (what an earlier version did) hides the spread within one
+        # starting value. If seeds of the same start end further apart than the starting values
+        # were, sigma has not converged anywhere - it is wandering.
+        if len(args.seeds) > 1 and within_ratio >= start_ratio:
+            print("   -> sigma no longer reflects where it started, but it does not settle either: it")
+            print("      wanders. That is NOT evidence that the rule replaces tuning.")
+        elif between_ratio < start_ratio / 2:
+            print("   -> different starting values end near a common sigma: evidence the rule replaces")
+            print("      the tuning step the static variant needed.")
+        else:
+            print("   -> the final sigma still reflects where it started: within this budget the rule")
+            print("      has NOT replaced tuning. That is a finding too - say so.")
+
+        adaptive_runs = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"}
+        capped = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"
+                  and r["sigma"] is not None and r["sigma"] >= config.ADAPTIVE_MAX_SIGMA}
+        print(f"\n   sigma reached its upper bound ({config.ADAPTIVE_MAX_SIGMA}) in "
+              f"{len(capped)} of {len(adaptive_runs)} adaptive runs")
+
+        if "static" in args.variants and len(args.seeds) > 1:
+            def dependence(variant: str) -> float:
+                means = [statistics.fmean(finals(variant, s)) for s in args.sigmas]
+                return max(means) - min(means)
+            spread = statistics.fmean(
+                mean_sd(finals(v, s))[1] for v in args.variants for s in args.sigmas)
+            print(f"\n   how much final distance depends on sigma0: static {dependence('static'):.3f} m, "
+                  f"adaptive {dependence('adaptive'):.3f} m")
+            print(f"   typical spread between seeds: {spread:.3f} m")
+            if max(dependence("static"), dependence("adaptive")) < spread:
+                print("   -> both inside the noise: no evidence either variant is sensitive to sigma0.")
+
+    # ---- question 3: does the success rate respond to sigma at all?
+    # The 1/5 rule assumes that larger steps succeed less often. The static variant logs its
+    # success rate without acting on it, so it shows directly whether that assumption holds.
+    if "static" in args.variants and len(args.sigmas) > 1:
+        print("\n3. DOES THE SUCCESS RATE DEPEND ON SIGMA? (static variant, after the first window)\n")
+        rates = {}
+        for sigma0 in args.sigmas:
+            values = [r["success_rate"] for r in rows
+                      if r["variant"] == "static" and r["sigma0"] == sigma0
+                      and r["generation"] > config.ADAPTIVE_WINDOW and r["success_rate"] is not None]
+            rates[sigma0] = statistics.fmean(values) if values else float("nan")
+            print(f"   sigma {sigma0:<5} mean success rate {rates[sigma0]:.3f}")
+        ordered = [rates[s] for s in sorted(args.sigmas)]
+        if max(ordered) - min(ordered) < 0.05:
+            print("   -> the success rate barely changes with sigma. The rule's input then says little")
+            print("      about whether sigma is too large or too small, so expect the adaptive sigma")
+            print("      to wander rather than settle.")
+        elif all(x >= y for x, y in zip(ordered, ordered[1:])):
+            print("   -> the success rate falls as sigma grows, as the 1/5 rule assumes.")
+        else:
+            print("   -> the success rate does not fall steadily with sigma, which the 1/5 rule assumes.")
+
+    print("\nPer-generation rows, including sigma and success rate, are in results/sigma_sweep.csv")
+    print("for plotting the sigma trajectories. Each run's best controller is in results/sigma_best/.")
+
+
+# --------------------------------------------------------------------------- #
 #  CLI
 # --------------------------------------------------------------------------- #
 def main() -> None:
@@ -540,6 +833,8 @@ def main() -> None:
     p.add_argument("--genotype", default="quick_best.npy")
     p.add_argument("--max", type=int, default=60, help="longest duration to try, seconds")
     p.add_argument("--step", type=int, default=5)
+    p.add_argument("--reach", type=float, default=0.05, help="distance (m) that counts as reaching the target")
+    p.add_argument("--floor", type=float, default=0.3, help="warn about a floor effect below this distance (m)")
     p.set_defaults(func=experiment_duration)
 
     p = subparsers.add_parser("clock", help="sweep CLOCK_FREQ")
@@ -571,6 +866,17 @@ def main() -> None:
     p = subparsers.add_parser("hidden", help="genotype length vs HIDDEN_SIZE (no simulation)")
     p.add_argument("--sizes", type=int, nargs="+", default=[2, 4, 6, 8, 12, 16])
     p.set_defaults(func=experiment_hidden)
+
+    p = subparsers.add_parser("sigma", help="fixed-sigma pilot + does the 1/5 rule care where it starts")
+    p.add_argument("--sigmas", type=float, nargs="+", default=[0.1, 0.3, 0.5])
+    p.add_argument("--variants", nargs="+", default=["static", "adaptive"],
+                   choices=["static", "adaptive"])
+    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
+    p.add_argument("--pop", type=int, default=30, help="population size (pilot scale)")
+    p.add_argument("--generations", type=int, default=40)
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1),
+                   help="parallel runs; lower this if the laptop struggles")
+    p.set_defaults(func=experiment_sigma)
 
     args = parser.parse_args()
     args.func(args)

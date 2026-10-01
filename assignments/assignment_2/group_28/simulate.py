@@ -68,7 +68,7 @@ import numpy.typing as npt
 
 # Local libraries (ARIEL)
 from ariel.body_phenotypes.robogen_lite.modules.core import CoreModule
-from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
+from ariel.body_phenotypes.robogen_lite.prebuilt_robots import john_set
 from ariel.simulation.environments import SimpleFlatWorld
 from ariel.simulation.tasks.targeted_locomotion import distance_to_target
 from ariel.utils.renderers import single_frame_renderer, video_renderer
@@ -100,8 +100,18 @@ def build_world() -> SimpleFlatWorld:
 
 
 def build_robot() -> CoreModule:
-    """The body. A2_template_2026.py:91."""
-    return gecko()
+    """The body: the John Set gecko. 6 hinges, 12 controller inputs, 108 weights.
+
+    NOT `prebuilt_robots.gecko.gecko()`, which is what A2_template_2026.py:105 imports. ariel
+    ships TWO different functions called gecko(), in two different modules, and they are
+    different bodies - the template's has 8 hinges and 132 weights. The brief requires a body
+    from the John Set ("Body: free choice from the 'John Set'"), so the module is named
+    explicitly here rather than importing the bare name, because importing `gecko` by itself is
+    exactly how the wrong one got used for the first week.
+
+    Chosen over john_set.spider_8 on seed-to-seed spread, not on mean: report/body_pilot.md.
+    """
+    return john_set.gecko()
 
 
 def get_core_position(data: mj.MjData) -> npt.NDArray[np.float64]:
@@ -154,6 +164,15 @@ class Simulator:
             correct_collision_with_floor=True,
         )
         self.model = world.spec.compile()
+
+        # MuJoCo resets the simulation when it becomes unstable, which sets data.time back to 0.
+        # simple_runner steps until data.time reaches the duration, so an unstable controller would
+        # replay forever. With the reset off, the state turns to NaN instead, the NaN guard in the
+        # control callback catches it, and the controller gets WORST_FITNESS like any failed one.
+        # Found on 1 Oct: the speed test hung on seed 13 (MUJOCO_LOG.TXT: "Nan, Inf or huge value
+        # in QACC ... Time = 12.0820"). Normal evaluations are unchanged by this flag.
+        self.model.opt.disableflags |= mj.mjtDisableBit.mjDSBL_AUTORESET
+
         self.data = mj.MjData(self.model)
 
         # Clean, known state before reading anything. A2_template_2026.py:267.
@@ -263,6 +282,13 @@ class Simulator:
             if not np.all(np.isfinite(actions)):
                 self._nan_seen = True
                 d.ctrl[:] = 0.0
+                # If the physics went unstable, the state itself is now NaN, and stepping a NaN
+                # state makes MuJoCo print a warning on every remaining step (thousands of lines).
+                # The result is WORST_FITNESS either way, so put back a finite state and move the
+                # clock to the end: simple_runner then stops after its current batch of steps.
+                d.qpos[:] = m.qpos0
+                d.qvel[:] = 0.0
+                d.time = self.duration
                 return
 
             # DELTA application, per the controller contract at

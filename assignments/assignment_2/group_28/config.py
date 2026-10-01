@@ -26,7 +26,8 @@ SPAWN_POS: list[float] = [0.0, 0.0, 0.1]
 TARGET_POSITION: list[float] = [2.0, 0.0, 0.1]
 
 # 15 s does not let the gecko reach the target - the best controller from the Stage 1 probe
-# stopped progressing at ~25 s, 1.45 m short (stage1_findings.md section 5). Fitness therefore
+# stopped progressing at ~25 s, 1.45 m short (stage1_findings.md section 5). That probe ran on
+# the template's 8-hinge body; re-check it on the John Set gecko before freezing. Fitness therefore
 # measures PROGRESS, not arrival. That is still a monotone gradient, every configuration
 # truncates at the same point, and 30 s would double an already-doubled compute budget.
 SIM_DURATION: float = 15.0
@@ -36,10 +37,11 @@ SIM_DURATION: float = 15.0
 # --------------------------------------------------------------------------- #
 # controller.py reads these; defining them here makes this file authoritative.
 HIDDEN_SIZE: int = 6
-# Settled by argument, not by sweep. 132 weights (22h: 14 inputs, 8 outputs, no bias vector) and
-# 113.6 evaluations per weight at the current budget. Inherited from the template and NOT tuned -
-# section 6 gives every reason to expect a sweep would return another null, so the compute went
-# into 20 seeds instead. Methods says exactly that. See stage1_findings.md section 10.
+# Settled by argument, not by sweep. On the John Set gecko: 108 weights (18h, from 12 inputs and
+# 6 outputs with no bias vector), 138.9 evaluations per weight at the current budget. Inherited
+# from the template and NOT tuned - section 6 gives every reason to expect a sweep would return
+# another null, so the compute went into 20 seeds instead. Methods says exactly that.
+# Confirmed by `experiments.py hidden` on the John Set gecko, 1 Oct.
 CLOCK_FREQ: float = 1.0
 # Settled, as a null. 1-6 Hz across 3 seeds (18 runs): F = 0.95 between frequencies - less
 # variation than noise alone would give - and a paired permutation test gives p = 0.38. No choice
@@ -63,6 +65,9 @@ DEFAULT_SEED: int = 1
 #   (b) The clock sweep measured the seed-to-seed sd of a 20-generation outcome at 0.107 m. At
 #       80% power that makes the smallest detectable difference 0.190 m with 5 seeds and 0.095 m
 #       with 20. Half the progress a run makes would be invisible at 5.
+#       STALE: 0.107 m was measured on the template's 8-hinge body. Re-estimate it from the
+#       pilot on the John Set gecko before this paragraph goes in Methods. The ARGUMENT holds
+#       whatever the number turns out to be; only the number is in doubt.
 # Compute is cheap enough here to buy statistical power instead of scale.
 SEEDS: tuple[int, ...] = tuple(range(1, 21))
 
@@ -87,10 +92,11 @@ INIT_WEIGHT_SCALE: float = 0.5  # std of the normal the initial genotypes are dr
 # --------------------------------------------------------------------------- #
 #  Mutation - the one thing that differs between the two variants
 # --------------------------------------------------------------------------- #
-# sigma is the standard deviation of the Gaussian added to each weight. A1 adapted a discrete
-# mutation PROBABILITY, which the report noted was "an analogy rather than a transfer" of
-# Rechenberg's analysis. Here sigma is a continuous step size on a real-valued genome, which
-# is what the 1/5 rule was derived for.
+# sigma is the standard deviation of the Gaussian added to each weight - a STEP SIZE, which is
+# the parameter the 1/5 rule was derived to control. A1 adapted a mutation PROBABILITY instead,
+# and the A1 marker deducted for exactly that conflation. Note what is NOT native here: the rule
+# was derived for the (1+1)-ES, and this is a population-based EA with tournament selection and
+# elitism. Native parameter, extended algorithm - say both, never "native setting".
 STATIC_SIGMA: float = 0.3  # the value the Stage 1 probe used
 ADAPTIVE_INITIAL_SIGMA: float = 0.3  # MUST equal STATIC_SIGMA: both variants start identical,
 # so any divergence is the controller's doing. A1 nearly shipped this confound.

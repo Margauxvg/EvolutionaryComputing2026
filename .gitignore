@@ -4,6 +4,7 @@
 # Dirs
 __data__
 **/results/
+**/notes/
 # Mujoco
 MUJOCO_LOG.TXT
 # DrawIo

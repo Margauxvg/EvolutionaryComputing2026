@@ -17,11 +17,12 @@ A PORT OF A1's mutation.py, WITH ONE DELIBERATE DIFFERENCE
     discrete tree operators             Gaussian perturbation of a real vector
     mutation fires with probability p   mutation ALWAYS fires; sigma sets its size
 
-That last row matters. A1's report noted that applying the 1/5 rule to a discrete mutation
-probability was "an analogy rather than a transfer of its underlying analysis, and our results
-give some reason to doubt that the analogy holds". Rechenberg derived the rule for a continuous
-step size on a real-valued genome, which is exactly what sigma is here. So A2 tests the rule in
-its native setting, and the Introduction can say why that is worth doing.
+That last row matters. A1 applied the 1/5 rule to a mutation probability and its report
+concluded "Our results call this analogy into question rather than confirm it." The A1 marker also deducted for conflating the
+two: the rule adapts how FAR a mutation moves, not how OFTEN one happens. Here sigma is the step
+size of a Gaussian perturbation on a real-valued genome - the parameter the rule was derived to
+control. The algorithm around it is not native: the rule comes from the (1+1)-ES, and this is a
+population with tournament selection and elitism. Native parameter, extended algorithm.
 
 WHAT ea.py CALLS
 
