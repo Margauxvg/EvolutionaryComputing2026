@@ -761,6 +761,119 @@ for a fixed budget over per-run plateau stopping (decision D6).
 
 ---
 
+## 12. The pilot: 150 generations at μ = 50 (1 Oct)
+
+**What we did.** Ran the real EA at its final settings: σ₀ = 0.3, μ = 50, 150 generations (7,550
+evaluations per run), both variants, 8 seeds, 16 workers. Command:
+`experiments.py sigma --sigmas 0.3 --variants static adaptive --pop 50 --generations 150 --seeds 1 2 3 4 5 6 7 8 --workers 16`.
+Saved as `results/sigma_sweep.csv`; copy it to `sigma_sweep_pilot2.csv` before the next sweep
+overwrites it.
+
+**Why.** To settle the run length, μ, the number of runs and the stopping rule before the design
+freeze, and to see how both variants behave over a realistic run length.
+
+**Result 1: still no plateau at 150 generations.** Mean best distance, both variants pooled:
+
+| generations | 0–25 | 25–50 | 50–75 | 75–100 | 100–125 | 125–150 |
+|---|---|---|---|---|---|---|
+| improvement (m) | 0.362 | 0.262 | 0.292 | 0.151 | 0.086 | **0.067** |
+
+The gains are shrinking, but the last 25 generations still brought 0.067 m on a mean distance of
+0.62 m. Extrapolating the decline, the mean curve flattens somewhere around **250–300
+generations**.
+
+**Result 2: the draft's per-run stopping rule would have wrecked the experiment.** 82% of
+generations were flat, with flat streaks of up to **96 generations**. The rule (less than 0.01 m
+improvement over 20 generations) would have stopped **14 of the 16 runs** before generation 150,
+one as early as generation 20. Adaptive seed 7 would have stopped at generation 23 and then
+improved by **another 0.995 m**. The rule also stops adaptive runs earlier, because of their slow
+start (Result 3), so it would bias the comparison against the very variant we're testing. **D6 is
+settled: a fixed budget, set past the plateau of the mean curve.**
+
+**Result 3: the adaptive variant starts slower and catches up.** Mean best distance (m), 8 seeds
+per variant:
+
+| gen | 10 | 25 | 50 | 75 | 100 | 125 | 150 |
+|---|---|---|---|---|---|---|---|
+| static | 1.580 | **1.380** | **1.106** | 0.870 | 0.810 | 0.739 | 0.660 |
+| adaptive | 1.710 | 1.580 | 1.330 | 0.981 | **0.738** | **0.639** | **0.585** |
+
+- Gen 25: static is clearly ahead (exact Mann–Whitney p = 0.021, Â₁₂ = 0.16 for adaptive being
+  better).
+- Gen 50: p = 0.050.
+- Gen 150: no difference (p = 0.51; adaptive better on 4 of 8 seeds, paired by seed).
+- Convergence speed (generations to reach 1.228 m, the worst final value): static 45.6, adaptive
+  70.9 on average.
+
+This is the **opposite of H1**. It's a pilot (8 seeds, uncorrected tests), so treat it as a
+direction, not a result.
+
+**Result 4: the mechanism, and a correction to §11.** The adaptive σ (geometric mean over 8
+seeds):
+
+| gen | 1 | 10 | 20 | 30 | 50 | 75 | 100 | 125 | 150 |
+|---|---|---|---|---|---|---|---|---|---|
+| σ | 0.30 | 0.77 | 1.11 | 1.56 | 1.23 | 0.75 | 0.44 | 0.18 | **0.15** |
+
+- **Early on, the success rate is above 1/5** (0.24 at generation 1), so the rule *increases* σ.
+  It hit the σ_max = 2.0 cap in **7 of 8 runs**, and the population scattered: genotype spread
+  went 0.49 → **4.27** by generation 50, against 0.79 for static. Big jumps slowed early progress.
+- **Later the success rate drops**, so σ shrinks to 0.15, half the static value. The spread
+  collapses back to 0.47, and the adaptive variant fine-tunes and catches up.
+- **Correction to §11:** over 40 generations the static success rate looked independent of σ.
+  Over 150 it falls below 1/5, from 0.24 to about **0.16–0.17**. So the rule does receive a
+  usable signal later in the run; the adaptive variant holds its own success rate at 0.19–0.21,
+  as designed. The real issue is the *early* phase: with each child compared to its own (often
+  weak) parent, success stays above 1/5 even at very large σ, so σ runs up to the cap. That is the
+  population setting the Intro warns about, now visible in the data.
+- **σ_max = 2.0 is shaping the early phase**, since it binds in 7 of 8 runs. Methods has to report
+  that, and the Discussion should treat the cap as part of what was tested.
+
+**Result 5: spread, power and budget.**
+
+- **Seed-to-seed sd** at generation 150, pooled: **0.293 m**. With 80% power, 20 runs per
+  variant detect a difference of **0.260 m**, and 10 runs detect 0.367 m. The pilot's
+  final-fitness gap is 0.075 m, so the final experiment probably won't show a significant
+  difference in *final* fitness. Convergence speed and the σ mechanism are where the effects are,
+  which is what the two-part RQ is for.
+- **Timing:** 84 min for 16 runs of 7,550 evaluations = **24.0 evaluations/s** with 16 workers
+  (0.65 s per evaluation per process). That's faster than the speed test, because longer runs
+  waste less time starting up.
+- **Budget for the final 60 runs** (μ = 50, 16 workers): G = 200 → ~7 h; G = 250 → ~8.7 h;
+  **G = 300 → ~10.5 h**. Even 300 generations fits Janna's week, overnight.
+- **No failed controllers and no instabilities** in 120,800 evaluations.
+
+**Result 6: a floor-effect risk is appearing.** Final distances ranged from 0.134 to 1.228 m;
+1 of 16 runs was below 0.3 m. The best controller (adaptive seed 6, 0.134 m at 15 s) walks much
+faster than the 40-generation one in §5. After 300 generations, more runs will approach 0, which
+compresses differences among the best runs. Re-run `duration` on
+`results/sigma_best/adaptive_sigma0.3_seed6.npy` (back it up first) to see whether it reaches the
+target just after 15 s.
+
+**What it changes.**
+
+- **D6:** fixed budget, decided. Keep the per-run plateau generation as a reported measure, not a
+  stopping rule.
+- **G:** about 300 generations (to be confirmed by you; 250 is the cheaper option).
+- **D1:** μ = 50 stays.
+- **D5:** 20 runs fit the budget.
+- **Power TODO in Methods:** filled in (sd 0.29 m, detectable difference 0.26 m).
+- **H1:** the pilot points the other way. See the note in the reply about how to handle the
+  hypotheses honestly.
+- **Floor effect, checked and decided.** `duration` on the best pilot controller (adaptive seed 6)
+  shows it walking at **12.4 cm/s**, 0.134 m from the target at 15 s. It arrives at about 16–17 s
+  and then jitters 3–12 cm around the target until 60 s.
+  - **Decision: keep the 2 m target and 15 s.** The floor only squeezes final fitness among the
+    best runs, and the pilot already predicts no significant final-fitness difference. Convergence
+    speed (threshold about 1.2 m) and the early σ behaviour are unaffected. A different task
+    would make every pilot number out of date two days before the freeze.
+  - **Methods now says so:** runs ending within 0.15 m are counted separately, and the σ and
+    success-rate analysis is repeated without them. Those runs lower their success rate simply
+    because they can't improve, which by itself makes the rule shrink σ.
+  - If unsure between 250 and 300 generations, the floor favours 250.
+
+---
+
 ## Provenance
 
 | Date | Machine | Script | What it produced |
@@ -780,6 +893,8 @@ for a fixed budget over per-run plateau stopping (decision D6).
 | 1 Oct | laptop | `experiments.py duration --genotype results/sigma_best_pilot1/static_sigma0.5_seed3.npy` | §5 on `john_set.gecko`; `results/duration.csv` |
 | 1 Oct | laptop | speed test (`sigma --workers 1`, seeds 1–12 finished) | 0.345 s/evaluation single-worker; the hang in §8b |
 | 1 Oct | laptop | speed test, `--workers 2 4 8 12 16` (after the fix) | speedups up to 6.7× (19.6 evals/s at 16); §8b confirmed 5/5 |
+| 1 Oct | laptop, 16 workers | pilot: `sigma --sigmas 0.3 --pop 50 --generations 150 --seeds 1-8` | §12; `results/sigma_sweep_pilot2.csv` |
+| 1 Oct | laptop | `duration --genotype results/sigma_best_pilot2/adaptive_sigma0.3_seed6.npy` | §12 floor-effect decision |
 | 29 Sep | laptop | `experiments.py qvel` | `results/qvel.csv` |
 | 29 Sep | laptop | `experiments.py nan` | `results/nan_guard.csv` |
 | 29 Sep | laptop | `experiments.py cache` | `results/cache.csv` |
