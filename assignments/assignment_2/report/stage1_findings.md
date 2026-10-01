@@ -874,6 +874,62 @@ target just after 15 s.
 
 ---
 
+## 13. The cap check: does the slow start come from the rule or from σ_max? (1 Oct)
+
+**What we did.** Re-ran only the adaptive variant with **σ_max = 1.0** instead of 2.0. Same 8
+seeds, same σ₀ = 0.3, μ = 50, 150 generations. The static runs from the pilot (§12) are the
+comparison, and all three groups start from identical populations per seed (checked). Command:
+`experiments.py sigma --sigmas 0.3 --variants adaptive --pop 50 --generations 150 --seeds 1-8 --sigma-max 1.0 --tag cap1 --workers 8`.
+Saved as `results/sigma_sweep_cap1.csv`.
+
+**Why.** In the pilot, σ hit the 2.0 cap in 7 of 8 runs during the early phase, the same phase in
+which the adaptive variant fell behind. So we couldn't tell whether the slow start came from the
+1/5 rule or from the number we chose as the cap.
+
+**Result 1: mean best distance (m), 8 seeds each.**
+
+| gen | 10 | 25 | 50 | 75 | 100 | 125 | 150 |
+|---|---|---|---|---|---|---|---|
+| static | 1.580 | 1.380 | 1.106 | 0.870 | 0.810 | 0.739 | 0.660 |
+| adaptive, cap 2.0 | 1.710 | 1.580 | 1.330 | 0.981 | 0.738 | 0.639 | 0.585 |
+| adaptive, cap 1.0 | 1.709 | **1.456** | **1.101** | 0.860 | 0.703 | 0.654 | 0.628 |
+
+- **Cap 1.0 against static:** no clear difference anywhere (gen 25 p = 0.44, gen 50 p = 0.96,
+  gen 150 p = 0.57).
+- **Generations to reach 1.231 m** (the worst final value of the 24 runs): static 45.4, cap 2.0
+  69.4, **cap 1.0 52.9**.
+
+**Result 2: what σ did.**
+- **The rule still drives σ up early.** It went 0.30 → about 0.72 (geometric mean) by generation 20
+  and touched the cap in 7 of 8 runs. Runs spent 0–33 generations at the cap.
+- **Less scatter.** Genotype spread peaked at about 2.0 instead of 4.3; static was at 0.79 at
+  generation 50.
+- **Then σ shrinks a long way:** to 0.06 by generation 150, against 0.15 with cap 2.0 and a fixed
+  0.3 for static. The population contracts to a spread of 0.19 (static: 0.71) while the success
+  rate stays near 0.19–0.20.
+
+**What it means.**
+
+- **Two findings separate here.** *The 1/5 rule inflates σ early* holds with both caps. It comes
+  from the success measure in a population, where early on more than 1 in 5 children beat their
+  often-weak parent. *That inflation makes the adaptive variant slower* is **mostly a cap
+  effect**. With σ limited to 1.0, the early gap shrinks to well within the noise.
+- **The convergence-speed result in §12 depends on σ_max.** It can't be reported as a property of
+  the 1/5 rule without saying so.
+- **Late in the run, cap 1.0 ends with a much smaller σ and a much tighter population** than
+  static. That's a possible premature-convergence risk for longer runs (250–300 generations),
+  worth watching in the final experiment.
+- **Choosing the cap now because 1.0 looks better** would be tuning only the adaptive variant,
+  the unfair comparison we avoided elsewhere. σ_max = 2.0 was set in `config.py` before any
+  pilot. Options (see the reply of 1 Oct):
+  - **(a)** Keep 2.0 and report this 8-seed check as a sensitivity analysis.
+  - **(c)** Run both caps in the final experiment, as a fourth configuration.
+
+**Timing:** 54.9 min for 8 runs; 0.425 s per evaluation per process with 8 workers. No failed
+controllers, and no run ended within 0.15 m.
+
+---
+
 ## Provenance
 
 | Date | Machine | Script | What it produced |
@@ -895,6 +951,7 @@ target just after 15 s.
 | 1 Oct | laptop | speed test, `--workers 2 4 8 12 16` (after the fix) | speedups up to 6.7× (19.6 evals/s at 16); §8b confirmed 5/5 |
 | 1 Oct | laptop, 16 workers | pilot: `sigma --sigmas 0.3 --pop 50 --generations 150 --seeds 1-8` | §12; `results/sigma_sweep_pilot2.csv` |
 | 1 Oct | laptop | `duration --genotype results/sigma_best_pilot2/adaptive_sigma0.3_seed6.npy` | §12 floor-effect decision |
+| 1 Oct | laptop, 8 workers | cap check: `sigma --variants adaptive --sigma-max 1.0 --tag cap1 --seeds 1-8` | §13; `results/sigma_sweep_cap1.csv` |
 | 29 Sep | laptop | `experiments.py qvel` | `results/qvel.csv` |
 | 29 Sep | laptop | `experiments.py nan` | `results/nan_guard.csv` |
 | 29 Sep | laptop | `experiments.py cache` | `results/cache.csv` |
