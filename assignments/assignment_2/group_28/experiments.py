@@ -166,17 +166,21 @@ def experiment_duration(args: argparse.Namespace) -> None:
 
     needed = 100.0 * start_distance / config.SIM_DURATION
 
-    # Speed WHILE WALKING: up to the closest approach, not over the whole replay. An earlier
-    # version averaged over all 60 s, which counted the time a controller spends standing at
-    # the target after arriving - and reported a robot walking at ~7.5 cm/s as "3.2 cm/s".
+    # Speed WHILE WALKING: up to arrival, not over the whole replay. Averaging over all 60 s
+    # counted the time spent standing at the target ("3.2 cm/s" for a ~7 cm/s walker), and
+    # "up to the closest approach" failed too: a robot that arrives at ~16 s and then jitters
+    # around the target can have its closest point at 50 s. Arrival = the first time it is
+    # within 10 cm of its closest approach.
     closest = min(rows, key=lambda r: r["distance_m"])
-    walking = 100.0 * (start_distance - closest["distance_m"]) / closest["sim_duration_s"]
+    arrival = next(r for r in rows if r["distance_m"] <= closest["distance_m"] + 0.10)
+    walking = 100.0 * (start_distance - arrival["distance_m"]) / arrival["sim_duration_s"]
     reached = [r for r in rows if r["distance_m"] <= args.reach]
     in_window = [r for r in rows if r["sim_duration_s"] <= config.SIM_DURATION]
     at_window = in_window[-1] if in_window else None
 
     print(f"\nclosest approach : {closest['distance_m']:.3f} m at {closest['sim_duration_s']} s")
-    print(f"walking speed    : {walking:.1f} cm/s (up to the closest approach)")
+    print(f"walking speed    : {walking:.1f} cm/s (up to arrival near the closest point, "
+          f"{arrival['sim_duration_s']} s)")
     print(f"needed to reach the target within SIM_DURATION={config.SIM_DURATION:.0f}s: {needed:.1f} cm/s")
     if reached:
         print(f"reaches the target (within {args.reach} m) at {reached[0]['sim_duration_s']} s")
@@ -568,7 +572,7 @@ def experiment_hidden(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 #  sigma - which fixed sigma, and does the 1/5 rule care where it starts?
 # --------------------------------------------------------------------------- #
-def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
+def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     """One full run of the real EA. Module level, so a spawned worker can pickle it.
 
     Unlike `search`, this is the algorithm Methods describes: ea.run_generation with
@@ -577,7 +581,7 @@ def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
 
     Returns one row per generation, generation 0 being the initial population.
     """
-    variant, sigma0, seed, pop_size, generations = job
+    variant, sigma0, seed, pop_size, generations, sigma_max, suffix = job
 
     # survivor_selection reads config.POP_SIZE when it is called, so the pilot's smaller
     # population has to be patched in HERE, inside the worker. A spawned process imports
@@ -596,7 +600,7 @@ def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
     if variant == "static":
         mutation = StaticMutation(rng, sigma=sigma0)
     else:
-        mutation = AdaptiveMutation(rng, initial_sigma=sigma0)
+        mutation = AdaptiveMutation(rng, initial_sigma=sigma0, max_sigma=sigma_max)
 
     def row(generation: int, sigma: float | None, evaluations: int) -> dict:
         best, mean, std = ea.fitness_stats(population)
@@ -604,6 +608,7 @@ def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
             "generation": generation,
             "variant": variant,
             "sigma0": sigma0,
+            "sigma_max": sigma_max,
             "seed": seed,
             "best_fitness": round(best, 6),
             "mean_fitness": round(mean, 6),
@@ -631,12 +636,17 @@ def _sigma_run(job: tuple[str, float, int, int, int]) -> list[dict]:
     # Keep each run's best controller, so the simulation-length check (`duration --genotype`)
     # and any video for the report can use a controller evolved on the John Set gecko.
     best = min(population, key=lambda ind: ind.fitness_)
-    out = RESULTS_DIR / "sigma_best"
+    out = RESULTS_DIR / f"sigma_best{suffix}"
     out.mkdir(parents=True, exist_ok=True)
     np.save(out / f"{variant}_sigma{sigma0}_seed{seed}.npy",
             np.asarray(best.genotype, dtype=np.float64))
 
     return rows
+
+
+def _suffix(args: argparse.Namespace) -> str:
+    """'_<tag>' when --tag is given, so a new sweep does not overwrite the previous one's files."""
+    return f"_{args.tag}" if args.tag else ""
 
 
 def experiment_sigma(args: argparse.Namespace) -> None:
@@ -653,12 +663,16 @@ def experiment_sigma(args: argparse.Namespace) -> None:
        place whatever sigma it starts from, the rule has replaced a tuning step. That is the
        standard argument for parameter control, and part two of the research question.
 
+    --sigma-max changes the adaptive variant's upper bound on sigma, to test whether a result
+    comes from the 1/5 rule or from the bound. --tag keeps the output files of different sweeps
+    apart (e.g. --tag cap1 writes results/sigma_sweep_cap1.csv and results/sigma_best_cap1/).
+
     Pilot scale by default: population 30 for 40 generations is 1,230 evaluations per run,
     the same budget as the body pilot, so the two are directly comparable. Three seeds can
     show a direction, not prove one - the summary says so where it matters.
     """
     jobs = [
-        (variant, sigma0, seed, args.pop, args.generations)
+        (variant, sigma0, seed, args.pop, args.generations, args.sigma_max, _suffix(args))
         for seed in args.seeds
         for sigma0 in args.sigmas
         for variant in args.variants
@@ -667,6 +681,9 @@ def experiment_sigma(args: argparse.Namespace) -> None:
     per_run = args.pop * (args.generations + 1)
     print(f"{len(jobs)} runs: variants {args.variants}, sigma {args.sigmas}, seeds {args.seeds}")
     print(f"population {args.pop}, {args.generations} generations, {per_run} evaluations per run")
+    if "adaptive" in args.variants:
+        print(f"adaptive sigma bounded to [{config.ADAPTIVE_MIN_SIGMA}, {args.sigma_max}]")
+    print(f"results go to results/sigma_sweep{_suffix(args)}.csv and results/sigma_best{_suffix(args)}/")
     print(f"{workers} worker process(es)\n")
 
     rows: list[dict] = []
@@ -695,7 +712,7 @@ def experiment_sigma(args: argparse.Namespace) -> None:
 
     print(f"\ntotal wall time {(time.perf_counter() - started) / 60:.1f} min")
     rows.sort(key=lambda r: (r["variant"], r["sigma0"], r["seed"], r["generation"]))
-    write_csv("sigma_sweep", rows)
+    write_csv(f"sigma_sweep{_suffix(args)}", rows)
     _summarise_sigma(rows, args)
 
 
@@ -721,6 +738,15 @@ def _summarise_sigma(rows: list[dict], args: argparse.Namespace) -> None:
             m, sd = mean_sd(values)
             print(f"{variant:<9} {sigma0:>7} {m:>7.3f} {sd:>7.3f}   "
                   + "  ".join(f"{v:.3f}" for v in values))
+
+    # How often the adaptive sigma ran into its upper bound. If it binds in most runs, the bound
+    # is shaping the result as much as the 1/5 rule is.
+    if "adaptive" in args.variants:
+        adaptive_runs = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"}
+        capped = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"
+                  and r["sigma"] is not None and r["sigma"] >= args.sigma_max}
+        print(f"\nadaptive sigma reached its upper bound ({args.sigma_max}) in "
+              f"{len(capped)} of {len(adaptive_runs)} runs")
 
     # ---- question 1: which fixed sigma
     if "static" in args.variants and len(args.sigmas) > 1:
@@ -778,11 +804,6 @@ def _summarise_sigma(rows: list[dict], args: argparse.Namespace) -> None:
             print("   -> the final sigma still reflects where it started: within this budget the rule")
             print("      has NOT replaced tuning. That is a finding too - say so.")
 
-        adaptive_runs = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"}
-        capped = {(r["sigma0"], r["seed"]) for r in rows if r["variant"] == "adaptive"
-                  and r["sigma"] is not None and r["sigma"] >= config.ADAPTIVE_MAX_SIGMA}
-        print(f"\n   sigma reached its upper bound ({config.ADAPTIVE_MAX_SIGMA}) in "
-              f"{len(capped)} of {len(adaptive_runs)} adaptive runs")
 
         if "static" in args.variants and len(args.seeds) > 1:
             def dependence(variant: str) -> float:
@@ -818,8 +839,10 @@ def _summarise_sigma(rows: list[dict], args: argparse.Namespace) -> None:
         else:
             print("   -> the success rate does not fall steadily with sigma, which the 1/5 rule assumes.")
 
-    print("\nPer-generation rows, including sigma and success rate, are in results/sigma_sweep.csv")
-    print("for plotting the sigma trajectories. Each run's best controller is in results/sigma_best/.")
+    print(f"\nPer-generation rows, including sigma and success rate, are in "
+          f"results/sigma_sweep{_suffix(args)}.csv")
+    print(f"for plotting the sigma trajectories. Each run's best controller is in "
+          f"results/sigma_best{_suffix(args)}/.")
 
 
 # --------------------------------------------------------------------------- #
@@ -874,6 +897,10 @@ def main() -> None:
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--pop", type=int, default=30, help="population size (pilot scale)")
     p.add_argument("--generations", type=int, default=40)
+    p.add_argument("--sigma-max", type=float, default=config.ADAPTIVE_MAX_SIGMA,
+                   help="upper bound on the adaptive sigma (default: config.ADAPTIVE_MAX_SIGMA)")
+    p.add_argument("--tag", default="",
+                   help="suffix for the output files, e.g. --tag cap1 writes sigma_sweep_cap1.csv")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1),
                    help="parallel runs; lower this if the laptop struggles")
     p.set_defaults(func=experiment_sigma)
