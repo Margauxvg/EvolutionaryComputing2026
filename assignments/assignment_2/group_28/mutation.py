@@ -220,13 +220,21 @@ def make_mutation(variant: str, rng: np.random.Generator) -> MutationVariant | N
     static variant at 0.6 and the adaptive one starting at 0.3, which would have made any
     divergence partly a difference in starting point rather than in the controller.
     """
+    if config.STATIC_SIGMA != config.ADAPTIVE_INITIAL_SIGMA:
+        msg = (
+            "STATIC_SIGMA and ADAPTIVE_INITIAL_SIGMA differ, so the variants would not "
+            "start identical. Set them to the same value in config.py."
+        )
+        raise ValueError(msg)
+    # Pass sigma explicitly: the constructor defaults are bound at import time, so they
+    # would miss any runtime override of config (e.g. run.py --sigma).
     if variant == "static":
-        return StaticMutation(rng)
+        return StaticMutation(rng, sigma=config.STATIC_SIGMA)
     if variant == "adaptive":
-        return AdaptiveMutation(rng)
+        return AdaptiveMutation(rng, initial_sigma=config.ADAPTIVE_INITIAL_SIGMA)
     if variant == "baseline":
         return None
-    msg = f"Unknown variant: {variant}"
+    msg = f"Unknown variant: {variant!r}"
     raise ValueError(msg)
 
 
