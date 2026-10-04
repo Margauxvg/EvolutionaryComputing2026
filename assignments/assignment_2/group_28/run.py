@@ -1,21 +1,20 @@
-"""Run the experiment grid: variant x seed, for one body. A port of A1's run.py.
+"""Run the experiment grid: variant x seed. A port of A1's run.py.
 
 Run from the project root:
 
-    # the full experiment as config.py describes it (all variants, all seeds)
-    uv run assignments/assignment_2/group_28/run.py
+    # the full experiment as config.py describes it (all four variants, all 20 seeds)
+    uv run assignments/assignment_2/group_28/run.py --workers 16
 
     # one run
-    uv run assignments/assignment_2/group_28/run.py --variant static --seed 1
+    uv run assignments/assignment_2/group_28/run.py --variant static --seed 101
 
-    # a pilot: override the body and the budget without editing config.py, and keep the
-    # results apart from the real experiment with --tag
-    uv run assignments/assignment_2/group_28/run.py --tag body_pilot --body gecko \
-        --variant static --seed 1 2 3 --pop-size 30 --generations 40 --workers 3
+    # a quick check before a long batch: tiny budget, kept apart from the real results by --tag
+    uv run assignments/assignment_2/group_28/run.py --tag smoke --seed 1 2 \
+        --pop-size 6 --generations 3 --workers 8
 
 WHAT IT WRITES
 --------------
-One folder per run:  results/<tag>/<body>/<variant>/seed_<n>/
+One folder per run:  results/<tag>/<body>/<variant>/seed_<n>/   (<body> is config.BODY_NAME)
     fitness_overview.csv   one row per generation, generation 0 included, columns from
                            config.CSV_COLUMNS - the same shape as A1 so analyze.py ports
     best.npy               the best genotype found in the run (for watch.py --load)
@@ -25,7 +24,7 @@ One folder per run:  results/<tag>/<body>/<variant>/seed_<n>/
 
 OVERRIDES
 ---------
---body, --pop-size and --generations change config values for this invocation only. They are
+--pop-size, --generations and --sigma change config values for this invocation only. They are
 re-applied inside every worker process, because a spawned worker imports config.py fresh.
 config.py stays the description of the final experiment; pilots never require editing it.
 
@@ -65,23 +64,17 @@ from pathlib import Path
 import mujoco as mj
 import numpy as np
 
-from ariel.body_phenotypes.robogen_lite.prebuilt_robots import john_set
 from ariel.ec import set_seed
 
 import config
 import ea
 import mutation as mutation_module
 
-BODIES = ("gecko", "spider_8")  # the John Set bodies under consideration
-
-
 # --------------------------------------------------------------------------- #
 #  Overrides
 # --------------------------------------------------------------------------- #
 def apply_overrides(overrides: dict) -> None:
-    """Set config values for this process. Must run before the Simulator is built."""
-    if overrides.get("body"):
-        config.BUILD_BODY = getattr(john_set, overrides["body"])
+    """Set config values for this process. Must run before the first run starts."""
     if overrides.get("pop_size"):
         config.POP_SIZE = overrides["pop_size"]
     if overrides.get("generations"):
@@ -95,7 +88,9 @@ def apply_overrides(overrides: dict) -> None:
 
 
 def body_name() -> str:
-    return config.BUILD_BODY.__name__
+    # The body is fixed (simulate.build_robot builds the John Set gecko), so this is only the
+    # folder label. run_info.json also records the hinge count read from the compiled model.
+    return config.BODY_NAME
 
 
 def run_dir(tag: str, variant: str, seed: int) -> Path:
@@ -140,7 +135,9 @@ def make_row(
         "num_scored_mutations": getattr(mutation, "last_num_scored", 0),
         "num_mutated": getattr(mutation, "last_num_mutated", 0),
         "mean_genotype_spread": round(ea.genotype_spread(population), 6),
-        "num_nan": ea.count_nan(population),
+        # Failed controllers among this generation's NEW evaluations (offspring, or the whole
+        # population at generation 0 and for the baseline), not among the survivors.
+        "num_nan": ea.last_num_failed,
         # Initial population plus POP_SIZE new individuals per generation. Identical for the
         # EA and the baseline, which is what makes the comparison equal-budget.
         "evaluations": config.POP_SIZE * (generation + 1),
@@ -212,12 +209,13 @@ def run(variant: str, seed: int, tag: str) -> Path:
         "pop_size": config.POP_SIZE,
         "generations": config.NUM_GENERATIONS,
         "evaluations": evaluations,
-        "control_mode": config.CONTROL_MODE,
+        "control_alpha": config.CONTROL_ALPHA,
         "clock_freq": config.CLOCK_FREQ,
         "hidden_size": config.HIDDEN_SIZE,
         "sim_duration": config.SIM_DURATION,
         "sigma_start": sigma_start,
         "sigma_end": getattr(mutation, "sigma", None),
+        "sigma_max": getattr(mutation, "max_sigma", None),  # None for static and baseline
         "best_fitness": best_fitness,
         "best_found_at_generation": best_generation,
         "wall_seconds": round(wall, 1),
@@ -290,7 +288,7 @@ def run_all(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the A2 experiment grid (variant x seed) for one body.",
+        description="Run the A2 experiment grid (variant x seed).",
     )
     parser.add_argument(
         "--variant",
@@ -306,11 +304,6 @@ def main() -> None:
         default=list(config.SEEDS),
         help="Seed(s) to run. Default: config.SEEDS.",
     )
-    parser.add_argument(
-        "--body",
-        choices=BODIES,
-        help="Override config.BUILD_BODY for this invocation.",
-    )
     parser.add_argument("--pop-size", type=int, help="Override config.POP_SIZE.")
     parser.add_argument("--generations", type=int, help="Override config.NUM_GENERATIONS.")
     parser.add_argument(
@@ -321,13 +314,14 @@ def main() -> None:
     parser.add_argument(
         "--tag",
         default="main",
-        help="Results subfolder, e.g. 'body_pilot'. Default: %(default)s.",
+        help="Results subfolder, e.g. 'smoke'. Default: %(default)s.",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=1,
-        help="Runs in parallel, one process each. Default: %(default)s.",
+        help="Runs in parallel, one process each. Use 16 for the main experiment on an "
+             "otherwise idle 8-core laptop (report/parallelisation_plan.md). Default: %(default)s.",
     )
     parser.add_argument(
         "--force",
@@ -337,7 +331,6 @@ def main() -> None:
     args = parser.parse_args()
 
     overrides = {
-        "body": args.body,
         "pop_size": args.pop_size,
         "generations": args.generations,
         "sigma": args.sigma,

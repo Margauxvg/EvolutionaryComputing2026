@@ -18,6 +18,8 @@ What it checks
    is pulled towards 1/5.
 5. On the sphere, adaptive ends clearly better than static (the textbook result).
 6. Both beat random search at the same number of evaluations.
+7. The baseline draws exactly POP_SIZE new individuals per generation (equal budget).
+8. adaptive_cap1 starts like adaptive and never exceeds its own, lower, sigma bound.
 """
 
 # Standard library
@@ -67,7 +69,8 @@ def run(variant: str, seed: int) -> dict:
         rates.append(getattr(mutation, "last_success_rate", None))
         best_so_far = min(best_so_far, ea.fitness_stats(population)[0])
 
-    return {"gen0": gen0, "best": best_so_far, "sigmas": sigmas, "rates": rates}
+    return {"gen0": gen0, "best": best_so_far, "sigmas": sigmas, "rates": rates,
+            "final_size": len(population)}
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -80,7 +83,7 @@ def main() -> None:
           f"sigma0 = {config.STATIC_SIGMA}, window = {config.ADAPTIVE_WINDOW}\n")
 
     seeds = [1, 2, 3]
-    results = {v: [run(v, s) for s in seeds] for v in ("static", "adaptive", "baseline")}
+    results = {v: [run(v, s) for s in seeds] for v in config.VARIANTS}
     again = run("adaptive", seeds[0])
 
     static_best = [r["best"] for r in results["static"]]
@@ -116,6 +119,12 @@ def main() -> None:
               max(adaptive_best) < min(static_best)),
         check("both EAs beat random search",
               max(static_best + adaptive_best) < min(baseline_best)),
+        check("baseline spends POP_SIZE evaluations per generation",
+              all(r["final_size"] == POP_SIZE for r in results["baseline"])),
+        check("adaptive_cap1 starts like adaptive and respects its bound",
+              all(c["gen0"] == a["gen0"] and c["sigmas"][0] == a["sigmas"][0]
+                  and max(c["sigmas"]) <= config.ADAPTIVE_CAP1_MAX_SIGMA
+                  for c, a in zip(results["adaptive_cap1"], results["adaptive"]))),
     ]
     print("\nALL CHECKS PASSED" if all(results_ok) else "\nSOME CHECKS FAILED")
 

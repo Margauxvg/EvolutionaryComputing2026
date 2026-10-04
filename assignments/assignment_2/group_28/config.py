@@ -4,8 +4,8 @@ Same pattern as A1's config.py, and for the same reason: the brief requires the 
 to be reproducible and Methods has to state every parameter. If a value lives here, Methods
 can be read off this file. If it is a function default somewhere, it will be misreported.
 
-Values marked PROVISIONAL are not yet decided - they are placeholders so the code runs.
-Settle them before the design freezes (Sat 3 Oct) and delete the marker.
+All values below are final for the main experiment (design frozen Sat 3 Oct). Pilots change
+them per invocation through run.py's options, never by editing this file.
 """
 
 from pathlib import Path
@@ -25,12 +25,16 @@ RESULT_FILE_NAME: str = "fitness_overview.csv"
 SPAWN_POS: list[float] = [0.0, 0.0, 0.1]
 TARGET_POSITION: list[float] = [2.0, 0.0, 0.1]
 
-# 15 s does not let the gecko reach the target - the best controller from the Stage 1 probe
-# stopped progressing at ~25 s, 1.45 m short (stage1_findings.md section 5). That probe ran on
-# the template's 8-hinge body; re-check it on the John Set gecko before freezing. Fitness therefore
-# measures PROGRESS, not arrival. That is still a monotone gradient, every configuration
-# truncates at the same point, and 30 s would double an already-doubled compute budget.
+# Re-measured on the John Set gecko (stage1_findings.md section 5): the best pilot controller
+# walks at ~12 cm/s and is 0.13 m from the target at 15 s. So almost every run measures PROGRESS
+# rather than arrival, and the few runs that get close are handled in the analysis (analyze.py,
+# SATURATION_DISTANCE) instead of by changing the task. Every configuration truncates at the
+# same point.
 SIM_DURATION: float = 15.0
+
+# A LABEL for the results folders and run_info.json only. The body itself is built in
+# simulate.build_robot, which always builds john_set.gecko(); change both together or neither.
+BODY_NAME: str = "gecko"
 
 # --------------------------------------------------------------------------- #
 #  Controller
@@ -62,21 +66,28 @@ DEFAULT_SEED: int = 1
 #   (a) At 5 vs 5 the smallest attainable two-sided Mann-Whitney p is 0.0079, reached only under
 #       complete separation, so the test bottoms out before it can resolve a moderate effect -
 #       which is exactly what happened in A1.
-#   (b) The clock sweep measured the seed-to-seed sd of a 20-generation outcome at 0.107 m. At
-#       80% power that makes the smallest detectable difference 0.190 m with 5 seeds and 0.095 m
-#       with 20. Half the progress a run makes would be invisible at 5.
-#       STALE: 0.107 m was measured on the template's 8-hinge body. Re-estimate it from the
-#       pilot on the John Set gecko before this paragraph goes in Methods. The ARGUMENT holds
-#       whatever the number turns out to be; only the number is in doubt.
+#   (b) The pilot (John Set gecko, 150 generations, 8 seeds per variant) measured the
+#       seed-to-seed sd of the final distance at 0.29 m. With 20 runs per configuration that
+#       gives 80% power for a difference of 0.26 m (the number Methods reports).
 # Compute is cheap enough here to buy statistical power instead of scale.
-SEEDS: tuple[int, ...] = tuple(range(1, 21))
+#
+# 101-120, NOT 1-20: the pilots used seeds 1-8, and runs are deterministic, so seeds 1-8 here
+# would just be the pilot runs continued. sigma_max = 1.0 and the run length were chosen after
+# looking at those runs, so the main experiment uses seeds that were never looked at.
+SEEDS: tuple[int, ...] = tuple(range(101, 121))
 
-POP_SIZE: int = 50  # PROVISIONAL
-NUM_GENERATIONS: int = 300  # PROVISIONAL - must come from the pilot plateau, not a guess.
-# The brief: "run until your fitness curve plateaus, and treat that plateau, not a fixed
-# generation count, as your stopping criterion."
+POP_SIZE: int = 50  # from the pilot (Methods, "Population size and run length")
+# The brief: "run until your fitness curve plateaus". In the pilot the mean best distance still
+# improved by 0.07 m over the last 25 of 150 generations, and that improvement roughly halved
+# every 50 generations, so the curve is expected to flatten around 250. Fixed for every run, so
+# every configuration gets the same budget: 50 x (250 + 1) = 12,550 evaluations.
+NUM_GENERATIONS: int = 250
 
-VARIANTS: tuple[str, ...] = ("static", "adaptive", "baseline")
+# The four configurations of the main experiment. "adaptive_cap1" is the 1/5 rule with the upper
+# bound on sigma lowered to ADAPTIVE_CAP1_MAX_SIGMA, to check how much the bound matters (the
+# pilot hit the 2.0 bound in 7 of 8 runs). ea.py only treats "baseline" differently, so every
+# other name runs the same EA and differs only in what mutation.make_mutation returns.
+VARIANTS: tuple[str, ...] = ("static", "adaptive", "adaptive_cap1", "baseline")
 
 # --------------------------------------------------------------------------- #
 #  EA - identical across static and adaptive. Only the mutation strategy differs.
@@ -108,7 +119,8 @@ ADAPTIVE_FACTOR: float = 1.22  # ~1/0.817, the reciprocal of the classical const
 # continuous space a shrinking sigma near an optimum is the rule working correctly, so the
 # floor is set low enough to be effectively off - a ceiling is the only real guard needed.
 ADAPTIVE_MIN_SIGMA: float = 1e-4
-ADAPTIVE_MAX_SIGMA: float = 2.0
+ADAPTIVE_MAX_SIGMA: float = 2.0  # four times INIT_WEIGHT_SCALE
+ADAPTIVE_CAP1_MAX_SIGMA: float = 1.0  # the upper bound for the "adaptive_cap1" configuration
 
 ADAPTIVE_WINDOW: int = 5  # generations pooled before comparing to the 1/5 target
 ADAPTIVE_MIN_SAMPLES: int = 10  # below this many scored mutations in the window, hold sigma
@@ -120,7 +132,8 @@ ADAPTIVE_MIN_SAMPLES: int = 10  # below this many scored mutations in the window
 #   sigma                 the quantity the research question is about
 #   mean_genotype_spread  A1 discovered its convergence story after the fact; log it from
 #                         generation 0 this time
-#   num_nan               NaN/inf individuals, so a silent controller blow-up is visible
+#   num_nan               failed (NaN/inf) controllers among that generation's new evaluations,
+#                         so a silent controller blow-up is visible
 CSV_COLUMNS: tuple[str, ...] = (
     "generation",
     "variant",

@@ -226,12 +226,23 @@ def make_mutation(variant: str, rng: np.random.Generator) -> MutationVariant | N
             "start identical. Set them to the same value in config.py."
         )
         raise ValueError(msg)
-    # Pass sigma explicitly: the constructor defaults are bound at import time, so they
-    # would miss any runtime override of config (e.g. run.py --sigma).
+    # Pass sigma (and the bound) explicitly: the constructor defaults are bound at import
+    # time, so they would miss any runtime override of config (e.g. run.py --sigma).
     if variant == "static":
         return StaticMutation(rng, sigma=config.STATIC_SIGMA)
     if variant == "adaptive":
-        return AdaptiveMutation(rng, initial_sigma=config.ADAPTIVE_INITIAL_SIGMA)
+        return AdaptiveMutation(
+            rng,
+            initial_sigma=config.ADAPTIVE_INITIAL_SIGMA,
+            max_sigma=config.ADAPTIVE_MAX_SIGMA,
+        )
+    if variant == "adaptive_cap1":
+        # Same rule, same start; only the upper bound on sigma is lower.
+        return AdaptiveMutation(
+            rng,
+            initial_sigma=config.ADAPTIVE_INITIAL_SIGMA,
+            max_sigma=config.ADAPTIVE_CAP1_MAX_SIGMA,
+        )
     if variant == "baseline":
         return None
     msg = f"Unknown variant: {variant!r}"

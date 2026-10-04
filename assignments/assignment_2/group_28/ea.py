@@ -89,6 +89,12 @@ from simulate import get_simulator
 # worker has to compile its own - which is what get_simulator's cache is for.
 _SIM = None
 
+# Failed controllers (NaN/inf, scored WORST_FITNESS) among the individuals the LAST evaluate() call
+# scored: the new offspring, or the whole population at generation 0 and for the baseline.
+# run.py logs this. Counting failures in the population after survivor selection instead would
+# almost always give 0, because a failed controller is never selected.
+last_num_failed = 0
+
 
 def simulator():
     """This process's Simulator, and the genotype length that goes with its body."""
@@ -113,18 +119,24 @@ def evaluate(population: Population) -> Population:
     rollout - about 0.45 s per individual - which is why nothing else in this file is allowed
     to be wasteful about calling it.
     """
+    global last_num_failed
     sim = simulator()
+    failed = 0
     for individual in population.unevaluated:
         genotype = np.asarray(individual.genotype, dtype=np.float64)
-        individual.fitness = sim.evaluate(genotype)
+        fitness = sim.evaluate(genotype)
+        individual.fitness = fitness
+        failed += fitness == config.WORST_FITNESS
+    last_num_failed = int(failed)
     return population
 
 
 def count_nan(population: Population) -> int:
-    """Individuals whose controller produced NaN or inf and scored WORST_FITNESS.
+    """Individuals in `population` whose controller produced NaN or inf (WORST_FITNESS).
 
-    Worth logging: a rising count means mutation is pushing weights into overflow, which is
-    invisible in the fitness curve because those individuals are simply never selected.
+    Note: on a population AFTER survivor selection this is almost always 0, because failed
+    individuals are never selected. To log failures per generation, use `last_num_failed`
+    (set by evaluate), which is what run.py does.
     """
     return sum(1 for ind in population if ind.fitness_ == config.WORST_FITNESS)
 
@@ -244,8 +256,12 @@ def baseline_regenerate(rng: np.random.Generator) -> Population:
     The brief requires a baseline at the same evaluation budget. Because this samples
     POP_SIZE new individuals per generation, it spends exactly the same number of evaluations
     as the EA - no separate accounting needed.
+
+    `size` is passed explicitly: init_population's default was bound to config.POP_SIZE when
+    this file was imported, so without it a --pop-size override (run.py, test_sphere.py) would
+    give the baseline a different budget from the EA.
     """
-    return init_population(rng)
+    return init_population(rng, size=config.POP_SIZE)
 
 
 # --------------------------------------------------------------------------- #

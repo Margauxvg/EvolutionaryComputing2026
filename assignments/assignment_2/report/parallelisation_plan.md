@@ -2,6 +2,10 @@
 
 Working note for Margaux's to-do (1 October). This is advice only; no code has been changed.
 
+> **Update 4 Oct:** the final design has **four** configurations (σ_max = 1.0 was added after the
+> cap check), so the main experiment is 4 × 20 = **80 runs** of 250 generations. On 16 workers
+> that is 5 full rounds, about 12 h. The 60-run figures below are from before that change.
+
 ---
 
 ## What parallelisation is for

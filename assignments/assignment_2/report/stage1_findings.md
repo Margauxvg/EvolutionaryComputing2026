@@ -930,6 +930,52 @@ controllers, and no run ended within 0.15 m.
 
 ---
 
+## 14. Final setup, and what changed in the code before the main run (4 Oct)
+
+**Main experiment:** four configurations (`static`, `adaptive` with σ_max = 2.0, `adaptive_cap1`
+with σ_max = 1.0, `baseline`) × 20 seeds, μ = 50, 250 generations (12,550 evaluations per run).
+80 runs on 16 workers = 5 full rounds, about 12 h.
+
+**Seeds 101–120, not 1–20.** The pilots (§12, §13) used seeds 1–8. Runs are deterministic, so
+seeds 1–8 would have repeated the pilot runs and simply continued them, and σ_max = 1.0 and G were
+chosen after looking at those runs. New seeds keep the main experiment separate from the data the
+design was based on.
+
+**Code fixes after the merge with `mohammed_a2_control`:**
+- `run.py` used `config.BUILD_BODY` and `config.CONTROL_MODE`, which don't exist in our
+  `config.py`, so it crashed before the first run. The `--body` option is gone: `simulate.py`
+  always builds the John Set gecko, so `--body spider_8` would have simulated the gecko and saved
+  it as "spider_8". `config.BODY_NAME` is now only the folder label.
+- The fourth configuration was missing. It's now the `adaptive_cap1` variant
+  (`config.ADAPTIVE_CAP1_MAX_SIGMA = 1.0`), and `make_mutation` passes σ_max explicitly.
+- `ea.baseline_regenerate` always drew 50 new individuals, whatever the population size was
+  (the default was fixed when `ea.py` was imported). The main run was unaffected (μ = 50), but
+  pilots with `--pop-size` and `test_sphere.py` gave the baseline a bigger budget.
+- `num_nan` was counted in the population after survivor selection, so it was always 0 (a failed
+  controller is never selected). It now counts failures among each generation's new evaluations
+  (`ea.last_num_failed`). The pilot CSVs have the same flaw in that column; their other columns
+  are unaffected. The Windows smoke test (4 Oct) printed MuJoCo instability warnings at t = 6.19 s
+  in three runs that still shared their offspring. The runs finished normally (no hang). Re-run
+  with the fix: seed 1, generation 1 has `num_nan = 1` in static, adaptive and adaptive_cap1 (the
+  same child), and the population mean stays at 2.04 m, so the guard scored it WORST_FITNESS and
+  selection dropped it.
+- `analyze.py` now does what Methods says:
+  - all four configurations and plots (i)–(iv);
+  - a convergence target from the EA runs only (with the baseline included, the target was its
+    worst run, which every EA run reaches immediately), counted in evaluations;
+  - Mann–Whitney on both measures, with one Holm family of 12 tests;
+  - saturated runs (≤ 0.15 m) counted, and the σ and success-rate analysis repeated without them;
+  - the per-run "last improvement > 0.01 m";
+  - sample std (ddof = 1) used everywhere.
+
+**Checked:**
+- `run.py` gives the same numbers as the pilot code path (`experiments.py sigma`) for the same
+  seed, so the pilots stay valid and nothing needs re-running.
+- Serial and parallel runs give byte-identical CSVs for all four configurations.
+- Resume skips finished runs.
+- `test_sphere.py` passes 9/9, including two new checks: the baseline's budget, and the σ bound
+  of `adaptive_cap1`.
+
 ## Provenance
 
 | Date | Machine | Script | What it produced |
