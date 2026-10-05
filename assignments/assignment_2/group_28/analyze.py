@@ -1,110 +1,9 @@
-"""Turn run.py's CSVs into the report's figures, stats table and plateau point.
-
-run.py only RUNS experiments, one (tag, body, variant, seed) at a time, each into its own
-fitness_overview.csv. Nothing else reads those back and compares them. This file does that:
-
-    uv run assignments/assignment_2/group_28/analyze.py --tag main
-
-Everything below follows Methods ("Experimental procedure"): four configurations, two outcome
-measures (final fitness and convergence speed), four plots, Mann-Whitney U with Holm and
-Vargha-Delaney A12, and the separate handling of runs that end close to the target.
-
-WHAT IT PRODUCES, under results/<tag>/<body>/analysis/
---------------------------------------------------------
-    fitness_curve.png        plot (i): best-so-far fitness vs generation, mean +/- std across
-                             seeds, one line per configuration - the brief's required
-                             "line-plot across generations, showing the average/std of fitness
-                             over your independent runs"
-    sigma_curve.png          plot (ii): sigma vs generation for both adaptive configurations,
-                             every run as a thin line plus the median as a thick one
-    success_rate_curve.png   plot (iii): mutation success rate vs generation for all three EA
-                             configurations, with the 1/5 target marked - together with
-                             sigma_curve.png, the A1 Figure 2 equivalent: shows WHY one variant
-                             did or didn't win
-    final_distance.png       plot (iv): the distribution of final distances per configuration
-    *_unsaturated.png        plots (ii) and (iii) again without the saturated runs (see below);
-                             only written if there are any
-    summary_table.csv        one row per configuration: n_seeds, best_overall, mean/std final
-                             best fitness, mean/std evaluations-to-target, n_reached_target,
-                             n_saturated - the flat, report-ready table (A1's summarize.py
-                             build_table)
-    sigma_summary.csv        per adaptive configuration, with and without the saturated runs:
-                             median final sigma, median peak sigma and when it happened, and the
-                             mean success rate over the last 50 generations
-    per_seed_detail.csv      one row per (variant, seed): final distance, whether the run is
-                             saturated, the last generation in which its best improved by more
-                             than 0.01 m (the per-run number Methods promises), its longest
-                             literal stall, and its sigma story. The mean-across-seeds view in
-                             fitness_curve.png and summary_table.csv can hide a seed that stalls
-                             badly while others keep improving, because the average keeps
-                             moving; this file is where that shows up directly.
-    stats.csv                both outcome measures, every pair of configurations: Mann-Whitney
-                             U, Holm-corrected p, Vargha-Delaney A12 and its effect-size label
-    convergence.csv          per seed, evaluations needed to reach the shared target fitness
-    summary.json             everything above as numbers, plus the plateau generation per
-                             configuration (to check afterwards that 250 generations was enough)
-
-A1 wrote its plots and tables flat into config.RESULTS_DIR, because it only ever had one
-experimental configuration running at a time. A2 instead has several pilots plus the real
-experiment, all needing to stay apart, which is what tag and body nest the output by here.
-
-STATISTICS
-----------
-Four configurations give six pairs, which is exactly the list in Methods: fixed vs each
-adaptive (2), adaptive vs adaptive (1), each EA vs the baseline (3). Each pair is tested on both
-outcome measures, so 12 tests. Holm is applied once across all 12 ("across these tests" in
-Methods). A1 corrected per operator instead, because it ran the same comparison repeatedly across
-several mutation operators - several independent families of tests. A2 has no operator axis, so
-there is one family. Both measures are lower-is-better, so A12 > 0.5 always favours `a`.
-
-CONVERGENCE SPEED
------------------
-The number of EVALUATIONS a run needs to first reach one shared target fitness. The target is
-the worst final best-so-far of any EA run (static, adaptive, adaptive_cap1), so every EA run
-reaches it by construction. The baseline is left out of the target on purpose: its worst run is
-far worse than any EA run, and including it would make the target so easy that every EA run
-"converges" in the first few generations. A baseline run that never reaches the target is
-counted as worse than any run that did (evaluations = budget + 1), which the rank-based
-Mann-Whitney test handles correctly; convergence.csv leaves it empty.
-Using each run's own final fitness as its target would instead reward a configuration that
-settled early at a poor value, by making it look like it "converged fastest" (A1's mistake,
-fixed here as it was there).
-
-SATURATED RUNS
---------------
-A run whose final distance is at most SATURATION_DISTANCE (0.15 m) has nearly reached the target
-and can hardly improve any more. That by itself lowers its success rate and makes the 1/5 rule
-shrink sigma, which would look like the rule "deciding" the search is over. These runs are
-counted per configuration, and the sigma and success-rate analysis is repeated without them.
-
-BASELINE: WHY best_fitness NEEDS A RUNNING MINIMUM
-----------------------------------------------------
-ea.run_generation throws the whole population away each generation for "baseline" (random
-search) rather than keeping the best found so far. So its best_fitness column, as logged by
-run.py, is just THAT generation's minimum - not cumulative, and not monotonic. The EA variants
-do not have this problem: elitism keeps the best individual, so their best_fitness column is
-already non-increasing by construction. Taking a running (cumulative) minimum per seed, BEFORE
-averaging across seeds, makes every variant's curve mean the same thing: "the best this
-configuration has found by generation g". This is applied to every variant for safety, even
-though it only changes the baseline's numbers.
-
-PLATEAU DETECTION
-------------------
-Not one of the outcome measures; a check on the run length. A configuration is "on its plateau"
-from the first generation g after which the mean best-so-far curve never again improves by more
-than --plateau-eps within --plateau-window generations. If that point is well before 250, the
-budget was long enough; if it is "not reached", the curves were still going down at the end and
-the report has to say so.
-"""
-
-# Standard library
 import argparse
 import json
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Third-party libraries
 import matplotlib
 matplotlib.use("Agg")  # headless: never try to open a window, e.g. over SSH or in a pool worker
 import matplotlib.pyplot as plt
@@ -398,7 +297,7 @@ def holm(p_values: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-#  Convergence speed (A1's definition, ported; see the module docstring)
+#  Convergence speed
 # --------------------------------------------------------------------------- #
 def convergence(
     frames: dict[str, list[pd.DataFrame]],
