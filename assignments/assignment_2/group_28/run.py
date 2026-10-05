@@ -1,3 +1,8 @@
+# Run from the project root (after making sure that group_28 is under assignment1 folder), such as:
+#   cd C:(...)EvolutionaryComputing2026
+#   uv run assignments\assignment_2\group_28\run.py                 (all 20 default seeds)
+#   uv run assignments\assignment_2\group_28\run.py --seed 1        (just seed 1)
+
 """Run the experiment grid: variant x seed. A port of A1's run.py.
 
 Run from the project root:
