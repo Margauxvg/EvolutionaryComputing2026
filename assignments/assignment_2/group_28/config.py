@@ -1,13 +1,3 @@
-"""Every number the experiment depends on, in one place.
-
-Same pattern as A1's config.py, and for the same reason: the brief requires the experiment
-to be reproducible and Methods has to state every parameter. If a value lives here, Methods
-can be read off this file. If it is a function default somewhere, it will be misreported.
-
-All values below are final for the main experiment (design frozen Sat 3 Oct). Pilots change
-them per invocation through run.py's options, never by editing this file.
-"""
-
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -16,25 +6,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR: Path = HERE / "results"
 RESULT_FILE_NAME: str = "fitness_overview.csv"
-
-# --------------------------------------------------------------------------- #
-#  The task - fixed for the whole assignment
-# --------------------------------------------------------------------------- #
-# The brief: keep body, world, SIM_DURATION and fitness identical across everything you
-# compare. Changing any of these mid-experiment makes earlier runs incomparable.
-SPAWN_POS: list[float] = [0.0, 0.0, 0.1]
-TARGET_POSITION: list[float] = [2.0, 0.0, 0.1]
-
-# Re-measured on the John Set gecko (stage1_findings.md section 5): the best pilot controller
-# walks at ~12 cm/s and is 0.13 m from the target at 15 s. So almost every run measures PROGRESS
-# rather than arrival, and the few runs that get close are handled in the analysis (analyze.py,
-# SATURATION_DISTANCE) instead of by changing the task. Every configuration truncates at the
-# same point.
-SIM_DURATION: float = 15.0
-
-# A LABEL for the results folders and run_info.json only. The body itself is built in
-# simulate.build_robot, which always builds john_set.gecko(); change both together or neither.
-BODY_NAME: str = "gecko"
 
 # --------------------------------------------------------------------------- #
 #  Controller
