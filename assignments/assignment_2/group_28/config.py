@@ -8,6 +8,14 @@ RESULTS_DIR: Path = HERE / "results"
 RESULT_FILE_NAME: str = "fitness_overview.csv"
 
 # --------------------------------------------------------------------------- #
+#  Task
+# --------------------------------------------------------------------------- #
+SPAWN_POS: list[float] = [0.0, 0.0, 0.1]
+TARGET_POSITION: list[float] = [2.0, 0.0, 0.1]
+SIM_DURATION: float = 15.0
+BODY_NAME: str = "gecko"
+
+# --------------------------------------------------------------------------- #
 #  Controller setup
 # --------------------------------------------------------------------------- #
 HIDDEN_SIZE: int = 6 # number of neurons in the hidden layer
