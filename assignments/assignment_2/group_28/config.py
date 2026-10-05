@@ -1,8 +1,5 @@
 from pathlib import Path
 
-# --------------------------------------------------------------------------- #
-#  Paths
-# --------------------------------------------------------------------------- #
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR: Path = HERE / "results"
 RESULT_FILE_NAME: str = "fitness_overview.csv"
@@ -10,7 +7,6 @@ RESULT_FILE_NAME: str = "fitness_overview.csv"
 # --------------------------------------------------------------------------- #
 #  Controller
 # --------------------------------------------------------------------------- #
-# controller.py reads these; defining them here makes this file authoritative.
 HIDDEN_SIZE: int = 6
 # Settled by argument, not by sweep. On the John Set gecko: 108 weights (18h, from 12 inputs and
 # 6 outputs with no bias vector), 138.9 evaluations per weight at the current budget. Inherited
