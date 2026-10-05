@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # headless: never try to open a window, e.g. over SSH or in a pool worker
+matplotlib.use("Agg") 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -29,15 +29,13 @@ VARIANT_LABEL = {
     "baseline": "random search",
 }
 
-SATURATION_DISTANCE = 0.15  # metres; Methods: "Runs that end within 0.15 m of the target"
-IMPROVEMENT_EPS = 0.01      # metres; Methods: "the last generation in which its best fitness
-                            # improved by more than 0.01 m"
-LATE_GENERATIONS = 50       # window for "late" success rate in sigma_summary.csv
+SATURATION_DISTANCE = 0.15  # distance below which a run is considered saturated (m)
+IMPROVEMENT_EPS = 0.01      # minimum imporvement considered meaningful (m)
+LATE_GENERATIONS = 50       # number of final generations used for success rate analysis
 
 
 def _nan_quietly(func, *args, **kwargs):
-    """np.nanmean / np.nanmedian without the 'Mean of empty slice' warning. Generation 0 has no
-    success rate in any run (nothing has been mutated yet), so an all-NaN column is expected."""
+    """Apply a NumPy aggregation without warnings for all-NaN slices."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         return func(*args, **kwargs)
@@ -61,13 +59,7 @@ def seed_dirs(tag: str, body: str, variant: str) -> list[Path]:
 
 
 def load_seed_csv(folder: Path) -> pd.DataFrame:
-    """One seed's fitness_overview.csv, with the running-minimum columns added.
-
-    na_values are not passed explicitly: pandas' default na recognition already treats the
-    literal string "nan" (written by run.py.make_row for sigma/success_rate on generations
-    where neither applies) as NaN, so sigma and success_rate come back as proper floats with
-    gaps rather than strings.
-    """
+    """Load one seed's results and add the running best fitness."""
     df = pd.read_csv(folder / config.RESULT_FILE_NAME)
     df = df.sort_values("generation").reset_index(drop=True)
     df["best_so_far"] = df["best_fitness"].cummin()
@@ -79,7 +71,7 @@ def is_saturated(df: pd.DataFrame) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-#  Aggregation across seeds
+#  Aggregation
 # --------------------------------------------------------------------------- #
 @dataclass
 class VariantCurve:
@@ -97,17 +89,14 @@ def aggregate(variant: str, frames: list[pd.DataFrame]) -> VariantCurve | None:
     if not frames:
         return None
 
-    # Seeds can differ in length if a pilot was interrupted; align on the shortest so every
-    # seed contributes to every generation plotted, rather than padding with guesses.
+    # use the shortest run so interrupted runs are not padded
     min_len = min(len(f) for f in frames)
     if min_len < max(len(f) for f in frames):
         print(f"  [{variant}] seeds have different lengths; truncating all to {min_len} rows")
 
     stacked = np.stack([f["best_so_far"].to_numpy()[:min_len] for f in frames])
     generations = frames[0]["generation"].to_numpy()[:min_len]
-    # Sample std (ddof=1), matching A1: these seeds are a SAMPLE from which we are estimating
-    # the std of the underlying process, not its entire population. ddof=1 is undefined
-    # (divides by zero) for a single seed, so fall back to an all-zero band there, as A1 did.
+    # sample standard deviation across seeds (ddof=1)
     curve_std = np.nanstd(stacked, axis=0, ddof=1) if stacked.shape[0] > 1 else np.zeros(min_len)
 
     sigma_runs = success_mean = None
@@ -138,10 +127,10 @@ def sample_std(values: list[float]) -> float:
 
 
 # --------------------------------------------------------------------------- #
-#  Plots
+#  Plotting
 # --------------------------------------------------------------------------- #
 def plot_fitness_curve(curves: dict[str, VariantCurve], out_path: Path, title: str) -> None:
-    """Plot (i)."""
+    """Plot fitness over generations."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for variant in VARIANT_ORDER:
         curve = curves.get(variant)
@@ -162,14 +151,7 @@ def plot_fitness_curve(curves: dict[str, VariantCurve], out_path: Path, title: s
 
 
 def plot_sigma_curve(curves: dict[str, VariantCurve], out_path: Path, title: str) -> None:
-    """Plot (ii): sigma vs generation for both adaptive configurations, every run plus the median.
-
-    The median rather than the mean because sigma moves multiplicatively and spans orders of
-    magnitude between runs; one run sitting at the bound would drag a mean far away from what
-    a typical run does. Split from the success-rate plot (rather than two subplots of one
-    figure) so either can be used alone if the page budget only allows one, matching A1's
-    one-plot-per-file convention.
-    """
+    """Plot sigma over generations for the adaptive variants."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for variant in ADAPTIVE_VARIANTS:
         curve = curves.get(variant)
@@ -193,9 +175,7 @@ def plot_sigma_curve(curves: dict[str, VariantCurve], out_path: Path, title: str
 
 
 def plot_success_rate_curve(curves: dict[str, VariantCurve], out_path: Path, title: str) -> None:
-    """Plot (iii): mutation success rate vs generation, all EA configurations, 1/5 target marked.
-    The static variant measures this too and never acts on it, which is what makes the curves
-    comparable (mutation.py's own docstring makes this point)."""
+    """Plot mutation success rate over generations."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for variant in EA_VARIANTS:
         curve = curves.get(variant)
@@ -215,7 +195,7 @@ def plot_success_rate_curve(curves: dict[str, VariantCurve], out_path: Path, tit
 
 
 def plot_final_distance(curves: dict[str, VariantCurve], out_path: Path, title: str) -> None:
-    """Plot (iv): distribution of final distances, a box per configuration with every run on top."""
+    """Plot distribution of final distances, a box per configuration with every run on top."""
     present = [v for v in VARIANT_ORDER if v in curves]
     data = [curves[v].per_seed_final for v in present]
     fig, ax = plt.subplots(figsize=(7, 4.5))
@@ -238,7 +218,7 @@ def plot_final_distance(curves: dict[str, VariantCurve], out_path: Path, title: 
 
 
 # --------------------------------------------------------------------------- #
-#  Statistics: pairwise comparisons on both outcome measures
+#  Statistics
 # --------------------------------------------------------------------------- #
 def vargha_delaney_a12(a: list[float], b: list[float]) -> float:
     """P(a value from `a` < a value from `b`) + 0.5 * P(equal). A12 > 0.5 favours a (lower=better)."""
@@ -297,7 +277,7 @@ def holm(p_values: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-#  Convergence speed
+#  Convergence
 # --------------------------------------------------------------------------- #
 def convergence(
     frames: dict[str, list[pd.DataFrame]],
@@ -329,17 +309,12 @@ def convergence(
 
 
 # --------------------------------------------------------------------------- #
-#  Per-seed detail
+#  Per-seed analysis
 # --------------------------------------------------------------------------- #
 def longest_stall(df: pd.DataFrame) -> tuple[int, int, int]:
-    """The longest run of consecutive generations with a literally UNCHANGED best_so_far -
-    not "improved by less than eps", but "found not a single fitter individual in this span".
-    This is the harder, more direct diagnostic: it is what a run like "frozen at 0.7996 from
-    generation 50 to 80" looks like in the data, and it is visible on a single seed even when
-    the mean-across-seeds curve still looks like it is moving, because the other seeds are not
-    stalled at the same time.
-
-    Returns (length_in_generations, start_generation, end_generation) for the longest such run.
+    """Find the longest run where best_so_far remains exactly unchanged. 
+    Unlike an epsilon-based plateau, this requires no fitter individual to be found during the entire run.
+    Returns (length_in_generations, start_generation, end_generation).
     """
     values = df["best_so_far"].to_numpy()
     gens = df["generation"].to_numpy()
@@ -373,9 +348,7 @@ def last_improvement(df: pd.DataFrame, eps: float = IMPROVEMENT_EPS) -> int | No
 
 
 def per_seed_detail(frames: dict[str, list[pd.DataFrame]]) -> pd.DataFrame:
-    """One row per (variant, seed). Deliberately separate from VariantCurve, which only holds
-    the mean and std ACROSS seeds - exactly the view that hides a case like one seed stalling
-    for 30 generations while another is still improving."""
+    """One row per (variant, seed), preserving details hidden by aggregation across seeds."""
     rows = []
     for variant, dfs in frames.items():
         for df in dfs:
@@ -427,14 +400,14 @@ def sigma_summary(detail: pd.DataFrame) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-#  Flat summary table (A1's build_table / summarize_combination, ported)
+#  Summary table
 # --------------------------------------------------------------------------- #
 def summary_table(
     curves: dict[str, VariantCurve],
     conv_frame: pd.DataFrame,
     detail: pd.DataFrame,
 ) -> pd.DataFrame:
-    """One row per configuration: exactly what goes straight into the report's summary table."""
+    """Create the summary table for each configuration."""
     rows = []
     for variant in VARIANT_ORDER:
         curve = curves.get(variant)
@@ -461,7 +434,7 @@ def summary_table(
 
 
 # --------------------------------------------------------------------------- #
-#  Plateau (run-length check, not an outcome measure)
+#  Plateau
 # --------------------------------------------------------------------------- #
 def plateau_generation(
     generations: np.ndarray,
@@ -469,21 +442,7 @@ def plateau_generation(
     eps: float,
     window: int,
 ) -> int | None:
-    """Earliest generation g from which the curve stays within `eps` of itself `window`
-    generations earlier, all the way to the end of the run.
-
-    Comparing each point against the GLOBAL minimum of everything after it (an earlier,
-    simpler version of this function did that) is wrong: for any curve that is still
-    steadily declining, that minimum is always the curve's own final point, so the last
-    couple of generations trivially look "settled" just because there is almost nothing left
-    of the curve to improve against - regardless of whether it had actually levelled off. A
-    FIXED trailing window avoids this: it asks "how much did it improve over the last N
-    generations", the same question at every point along the curve, start to finish.
-
-    Returns None if the curve never settles within eps for the rest of the run (still
-    improving, by more than eps every window, when the data runs out - a real finding, not a
-    bug: it means the budget was too short to see where this configuration levels off).
-    """
+    """Find the earliest generation where improvement stays within `eps` over the trailing window."""
     if len(mean_curve) <= window:
         return None
 
@@ -522,17 +481,16 @@ def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> Non
     out_dir.mkdir(parents=True, exist_ok=True)
     title = f"{body}, tag={tag}"
 
-    # Per-run detail first: it decides which runs are saturated.
+    # per-run detail first: it decides which runs are saturated
     detail = per_seed_detail(frames)
     detail.to_csv(out_dir / "per_seed_detail.csv", index=False)
 
-    # Plots (i)-(iv)
     plot_fitness_curve(curves, out_dir / "fitness_curve.png", title)
     plot_sigma_curve(curves, out_dir / "sigma_curve.png", title)
     plot_success_rate_curve(curves, out_dir / "success_rate_curve.png", title)
     plot_final_distance(curves, out_dir / "final_distance.png", title)
 
-    # (ii) and (iii) again without the saturated runs
+    # plot_sigma_curve and plot_success_rate_curve again without the saturated runs
     n_saturated_ea = int(detail.loc[detail["variant"].isin(EA_VARIANTS), "saturated"].sum())
     if n_saturated_ea:
         unsat_curves = {}
@@ -550,11 +508,9 @@ def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> Non
     sig_frame = sigma_summary(detail)
     sig_frame.to_csv(out_dir / "sigma_summary.csv", index=False)
 
-    # Convergence
     conv_frame, target, censored = convergence(frames)
     conv_frame.to_csv(out_dir / "convergence.csv", index=False)
 
-    # Statistics: both measures, one Holm family
     final_values = {v: c.per_seed_final for v, c in curves.items()}
     conv_values = {
         v: conv_frame.loc[conv_frame["variant"] == v, "evaluations_to_target"]
