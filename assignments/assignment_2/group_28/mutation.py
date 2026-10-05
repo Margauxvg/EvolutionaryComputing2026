@@ -1,52 +1,5 @@
-"""Mutation, and the 1/5 rule. This file IS the research question.
-
-Everything else in the project is machinery for asking one thing: does adapting the mutation
-step size by Rechenberg's 1/5 success rule beat holding it fixed? The two variants differ here
-and nowhere else - same body, world, SIM_DURATION, fitness, population, budget, seeds and
-selection. There is no crossover: mutation is the EA's only variation operator, which is what
-makes every offspring attributable to it (stage1_findings.md section 9).
-
-A PORT OF A1's mutation.py, WITH ONE DELIBERATE DIFFERENCE
-
-    A1                                  A2
-    MutationVariant / Static / Adaptive same three classes
-    _measure() / adapt() split          same
-    window + min-samples guard          same
-    static logs but does not act        same
-    mutation PROBABILITY adapts         mutation STEP SIZE (sigma) adapts
-    discrete tree operators             Gaussian perturbation of a real vector
-    mutation fires with probability p   mutation ALWAYS fires; sigma sets its size
-
-That last row matters. A1 applied the 1/5 rule to a mutation probability and its report
-concluded "Our results call this analogy into question rather than confirm it." The A1 marker also deducted for conflating the
-two: the rule adapts how FAR a mutation moves, not how OFTEN one happens. Here sigma is the step
-size of a Gaussian perturbation on a real-valued genome - the parameter the rule was derived to
-control. The algorithm around it is not native: the rule comes from the (1+1)-ES, and this is a
-population with tournament selection and elitism. Native parameter, extended algorithm.
-
-WHAT ea.py CALLS
-
-    make_mutation(variant, rng) -> MutationVariant | None     None for "baseline"
-    mutation.sigma                 read BEFORE offspring are made, so the logged value is the
-                                   one that produced them
-    mutation.mutate(offspring)     perturb, and remember which children are scorable
-    mutation.adapt(population)     called AFTER evaluate; measures success, and for the
-                                   adaptive variant updates sigma
-
-WHAT THE STAGE 1 PROBE SAYS TO WATCH FOR
-
-The quick search showed seven consecutive generations with no improvement at a fixed sigma
-(report/stage1_findings.md section 4). The 1/5 rule shrinks sigma when success falls below one
-in five - correct when steps are overshooting a smooth optimum, wrong on a flat plateau, where
-smaller steps find no improvement either and the rule shrinks itself into stagnation. A1 saw
-exactly that. Which kind of plateau this landscape has is what the experiment should reveal,
-and it is only visible if sigma is logged every generation from generation 0.
-"""
-
-# Standard library
 from collections import deque
 
-# Third-party libraries
 import numpy as np
 import numpy.typing as npt
 
@@ -60,30 +13,12 @@ def mutate(
     sigma: float,
     rng: np.random.Generator,
 ) -> npt.NDArray[np.float64]:
-    """Add Gaussian noise of standard deviation `sigma` to every weight.
-
-    A1's equivalent returned (genome, was_mutated) and could no-op: its tree operators
-    sometimes failed to produce a valid, changed genome, so it retried up to
-    MAX_MUTATION_ATTEMPTS and gave up. Nothing here can fail - every gene moves, every time -
-    so there is no retry loop and no was_mutated flag.
-
-    Weights are unbounded on purpose. There is no clipping, because clipping would interact
-    with sigma in a way that muddies the comparison: a large sigma against a bound behaves
-    differently from a large sigma in open space. simulate.py catches the consequence (a
-    controller that overflows to inf or nan scores WORST_FITNESS) and experiments.py nan shows
-    that finite weights, however large, stay finite through tanh.
-    """
+    """Add Gaussian noise of standard deviation `sigma` to every weight."""
     return genotype + rng.normal(scale=sigma, size=genotype.shape)
 
 
 class MutationVariant:
-    """Applies Gaussian mutation and measures how often it helps.
-
-    The measuring half runs for BOTH variants. The static variant logs its success rate and
-    ignores it; only the adaptive one acts. That is A1's trick and it is what makes the
-    comparison interpretable: the two curves are measured identically, so any difference in
-    the sigma column is the controller and nothing else.
-    """
+    """Applies Gaussian mutation and measures how often it helps."""
 
     sigma: float
 
@@ -96,16 +31,6 @@ class MutationVariant:
         self.last_num_mutated: int = 0
 
     def mutate(self, offspring: Population) -> Population:
-        """Perturb every child in place, and remember which ones can be scored.
-
-        Mutating in place keeps each Individual's `parent_fitness` tag, set by ea.reproduction,
-        and leaves requires_eval True, so ea.evaluate picks them up.
-
-        Every child goes into `_pending`. A1 had to exclude recombined children here - an
-        improvement over a parent cannot be attributed to mutation if crossover also touched the
-        child - which cost it roughly 70% of its samples. With mutation as the only variation
-        operator there is nothing to exclude.
-        """
         self._pending = []
         self.last_num_mutated = 0
 
@@ -118,15 +43,7 @@ class MutationVariant:
         return offspring
 
     def _measure(self) -> None:
-        """Success rate over the pooled window. Call after evaluate() has scored `_pending`.
-
-        A single generation is a noisy estimate of the success rate, so A1 pooled
-        ADAPTIVE_WINDOW generations before comparing to the 1/5 target, and that carries over.
-
-        An individual whose controller blew up scores WORST_FITNESS, which is worse than any
-        real parent fitness, so it counts as a failure. That is the right behaviour: mutation
-        that overflows the weights has not helped.
-        """
+        """Success rate over the pooled window. Call after evaluate() has scored `_pending`."""
         successes = sum(
             1
             for individual in self._pending
@@ -163,19 +80,7 @@ class StaticMutation(MutationVariant):
 
 class AdaptiveMutation(MutationVariant):
     """Rechenberg's 1/5 rule: sigma grows when mutated offspring beat their parent more than
-    one time in five, and shrinks otherwise.
-
-    The intuition is that a one-in-five success rate marks the balance point between steps too
-    small to make progress and steps so large they mostly land worse. Above it, the search is
-    being too cautious; below it, too bold.
-
-    On the sigma floor. A1 floored the mutation probability at 0.1 and it pinned there once
-    success hit zero, which the report read as a failure of the rule. In continuous space a
-    shrinking sigma near an optimum is the rule working exactly as designed, so the floor here
-    is set low enough to be effectively off (config.ADAPTIVE_MIN_SIGMA = 1e-4) and only the
-    ceiling really guards anything. If sigma bottoms out anyway, that is a finding about the
-    landscape - see the plateau note in the module docstring - and not a floor artefact.
-    """
+    one time in five, and shrinks otherwise."""
 
     def __init__(
         self,
@@ -198,9 +103,7 @@ class AdaptiveMutation(MutationVariant):
     def adapt(self, population: Population) -> Population:
         self._measure()
 
-        # Too few scored mutations in the window to trust the rate - hold sigma rather than
-        # react to noise. Without this guard a couple of unlucky generations can send sigma
-        # somewhere it takes many generations to come back from.
+        # Too few scored mutations in the window to trust the rate: hold sigma.
         if self.last_success_rate is None or self.last_num_scored < self.min_samples:
             return population
 
@@ -213,21 +116,14 @@ class AdaptiveMutation(MutationVariant):
 
 
 def make_mutation(variant: str, rng: np.random.Generator) -> MutationVariant | None:
-    """The mutation strategy for a variant. None for the baseline, which does not mutate.
-
-    Both variants start at the same sigma - config.STATIC_SIGMA and
-    config.ADAPTIVE_INITIAL_SIGMA must be equal. A1 nearly shipped a confound here, with the
-    static variant at 0.6 and the adaptive one starting at 0.3, which would have made any
-    divergence partly a difference in starting point rather than in the controller.
-    """
+    """The mutation strategy for a variant. None for the baseline, which does not mutate."""
     if config.STATIC_SIGMA != config.ADAPTIVE_INITIAL_SIGMA:
         msg = (
             "STATIC_SIGMA and ADAPTIVE_INITIAL_SIGMA differ, so the variants would not "
             "start identical. Set them to the same value in config.py."
         )
         raise ValueError(msg)
-    # Pass sigma (and the bound) explicitly: the constructor defaults are bound at import
-    # time, so they would miss any runtime override of config (e.g. run.py --sigma).
+
     if variant == "static":
         return StaticMutation(rng, sigma=config.STATIC_SIGMA)
     if variant == "adaptive":
@@ -237,7 +133,6 @@ def make_mutation(variant: str, rng: np.random.Generator) -> MutationVariant | N
             max_sigma=config.ADAPTIVE_MAX_SIGMA,
         )
     if variant == "adaptive_cap1":
-        # Same rule, same start; only the upper bound on sigma is lower.
         return AdaptiveMutation(
             rng,
             initial_sigma=config.ADAPTIVE_INITIAL_SIGMA,
@@ -250,8 +145,7 @@ def make_mutation(variant: str, rng: np.random.Generator) -> MutationVariant | N
 
 
 # --------------------------------------------------------------------------- #
-#  Self-test: python mutation.py
-#  Checks the 1/5 logic without touching the simulator, by feeding it fake fitnesses.
+#  Self-test: python mutation.py (checks the 1/5 logic with fake fitnesses, no simulator)
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
 
