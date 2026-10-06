@@ -68,7 +68,6 @@ import numpy.typing as npt
 
 # Local libraries (ARIEL)
 from ariel.body_phenotypes.robogen_lite.modules.core import CoreModule
-from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 from ariel.simulation.environments import SimpleFlatWorld
 from ariel.simulation.tasks.targeted_locomotion import distance_to_target
 from ariel.utils.renderers import single_frame_renderer, video_renderer
@@ -100,8 +99,8 @@ def build_world() -> SimpleFlatWorld:
 
 
 def build_robot() -> CoreModule:
-    """The body. A2_template_2026.py:91."""
-    return gecko()
+    """The body. Chosen in config.BUILD.BODY (a John Set body)"""
+    return config.BUILD_BODY()
 
 
 def get_core_position(data: mj.MjData) -> npt.NDArray[np.float64]:
@@ -211,8 +210,9 @@ class Simulator:
         try:
             match mode:
                 case "simple":
-                    # Headless. A2_template_2026.py:304.
-                    simple_runner(self.model, self.data, duration=self.duration)
+                    # Fixed number of physics steps, no hidden RNG (simple_runner seeds
+                    # data.ctrl from its own generator, which breaks determinism under DELTA).
+                    mj.mj_step(self.model, self.data, nstep=round(self.duration / self.model.opt.timestep))
                 case "video":
                     recorder = VideoRecorder(output_folder=video_folder or "__videos__")
                     video_renderer(
@@ -269,8 +269,11 @@ class Simulator:
             # A2_template_2026.py:121-125: smoother than DIRECT, which can
             # destabilise the sim on large jumps, but it accumulates, so the clip
             # is required rather than optional. Chosen once, used everywhere.
-            d.ctrl[:] += actions * config.CONTROL_ALPHA
-            d.ctrl[:] = np.clip(d.ctrl, -np.pi / 2, np.pi / 2)
+            if config.CONTROL_MODE == "direct":
+                d.ctrl[:] = actions
+            else:
+                d.ctrl[:] += actions * config.CONTROL_ALPHA
+                d.ctrl[:] = np.clip(d.ctrl, -np.pi / 2, np.pi / 2)
 
         return control_callback
 

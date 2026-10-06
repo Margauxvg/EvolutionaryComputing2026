@@ -9,6 +9,7 @@ Settle them before the design freezes (Sat 3 Oct) and delete the marker.
 """
 
 from pathlib import Path
+from ariel.body_phenotypes.robogen_lite.prebuilt_robots.john_set import gecko, spider_8
 
 # --------------------------------------------------------------------------- #
 #  Paths
@@ -30,6 +31,10 @@ TARGET_POSITION: list[float] = [2.0, 0.0, 0.1]
 # measures PROGRESS, not arrival. That is still a monotone gradient, every configuration
 # truncates at the same point, and 30 s would double an already-doubled compute budget.
 SIM_DURATION: float = 15.0
+
+BUILD_BODY = gecko  # PROVISIONAL - decided by the body pilot (John Set gecko vs spider_8)
+CONTROL_MODE: str = "direct"   # "direct" or "delta"
+
 
 # --------------------------------------------------------------------------- #
 #  Controller
