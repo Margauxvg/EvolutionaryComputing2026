@@ -1,61 +1,12 @@
-# Run from the project root (after making sure that group_28 is under assignment1 folder), such as:
+# Run from the project root (after making sure that group_28 is under assignment2 folder), such as:
 #   cd C:(...)EvolutionaryComputing2026
-#   uv run assignments\assignment_2\group_28\run.py                 (all 20 default seeds)
-#   uv run assignments\assignment_2\group_28\run.py --seed 1        (just seed 1)
-
-"""Run the experiment grid: variant x seed. A port of A1's run.py.
-
-Run from the project root:
-
-    # the full experiment as config.py describes it (all four variants, all 20 seeds)
-    uv run assignments/assignment_2/group_28/run.py --workers 16
-
-    # one run
-    uv run assignments/assignment_2/group_28/run.py --variant static --seed 101
-
-    # a quick check before a long batch: tiny budget, kept apart from the real results by --tag
+# the full experiment as config.py describes it (all four variants, all 20 seeds): uv run assignments/assignment_2/group_28/run.py --workers 16
+# one run: uv run assignments/assignment_2/group_28/run.py --variant static --seed 101
+# a quick check before a long batch: tiny budget, kept apart from the real results by --tag
     uv run assignments/assignment_2/group_28/run.py --tag smoke --seed 1 2 \
         --pop-size 6 --generations 3 --workers 8
 
-WHAT IT WRITES
---------------
-One folder per run:  results/<tag>/<body>/<variant>/seed_<n>/   (<body> is config.BODY_NAME)
-    fitness_overview.csv   one row per generation, generation 0 included, columns from
-                           config.CSV_COLUMNS - the same shape as A1 so analyze.py ports
-    best.npy               the best genotype found in the run (for watch.py --load)
-    run_info.json          everything needed to reproduce and report the run: body, sizes,
-                           budget, sigma at start and end, best fitness and when it was
-                           found, wall time, seconds per evaluation, library versions
 
-OVERRIDES
----------
---pop-size, --generations and --sigma change config values for this invocation only. They are
-re-applied inside every worker process, because a spawned worker imports config.py fresh.
-config.py stays the description of the final experiment; pilots never require editing it.
-
-RESUMING
---------
-Before running a job, run_job() checks whether that job's run_info.json already exists and
-is complete. If it does, the job is skipped rather than re-run. This means a crash, a sleeping
-laptop, or a Ctrl-C partway through a long batch costs only the one run that was in progress
-when it happened: restarting the exact same command picks up from there instead of redoing
-everything. Pass --force to ignore existing results and re-run every job anyway.
-
-SEEDING
--------
-Each run seeds one numpy Generator (passed to everything that samples), plus `random` and
-ariel.ec.set_seed for safety: nothing in our code draws from them, but if an ariel.ec
-operator is ever added, its package-level RNG would otherwise be shared across "independent"
-seeds. Evaluation itself is deterministic and draws nothing.
-
-PARALLELISM
------------
---workers N runs N (variant, seed) jobs at once, one process each. Every process builds its
-own Simulator on first use (MuJoCo models cannot be pickled). Results are identical to a
-sequential run, because each run depends only on its own seed.
-"""
-
-# Standard library
 import argparse
 import csv
 import json
@@ -65,7 +16,6 @@ import random
 import time
 from pathlib import Path
 
-# Third-party libraries
 import mujoco as mj
 import numpy as np
 
@@ -75,9 +25,7 @@ import config
 import ea
 import mutation as mutation_module
 
-# --------------------------------------------------------------------------- #
-#  Overrides
-# --------------------------------------------------------------------------- #
+
 def apply_overrides(overrides: dict) -> None:
     """Set config values for this process. Must run before the first run starts."""
     if overrides.get("pop_size"):
@@ -115,9 +63,6 @@ def is_done(tag: str, variant: str, seed: int) -> bool:
     return (run_dir(tag, variant, seed) / "run_info.json").exists()
 
 
-# --------------------------------------------------------------------------- #
-#  One CSV row
-# --------------------------------------------------------------------------- #
 def make_row(
     generation: int,
     variant: str,
@@ -149,9 +94,6 @@ def make_row(
     }
 
 
-# --------------------------------------------------------------------------- #
-#  One run
-# --------------------------------------------------------------------------- #
 def run(variant: str, seed: int, tag: str) -> Path:
     rng = np.random.default_rng(seed)
     random.seed(seed)
@@ -251,9 +193,6 @@ def run_job(job: tuple[str, int, str, dict, bool]) -> str:
     return str(run(variant, seed, tag))
 
 
-# --------------------------------------------------------------------------- #
-#  The grid
-# --------------------------------------------------------------------------- #
 def run_all(
     variants: list[str],
     seeds: list[int],
