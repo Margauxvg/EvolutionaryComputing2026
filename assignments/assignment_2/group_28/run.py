@@ -3,8 +3,7 @@
 # the full experiment as config.py describes it (all four variants, all 20 seeds): uv run assignments/assignment_2/group_28/run.py --workers 16
 # one run: uv run assignments/assignment_2/group_28/run.py --variant static --seed 101
 # a quick check before a long batch: tiny budget, kept apart from the real results by --tag
-    uv run assignments/assignment_2/group_28/run.py --tag smoke --seed 1 2 \
-        --pop-size 6 --generations 3 --workers 8
+#    uv run assignments/assignment_2/group_28/run.py --tag smoke --seed 1 2 --pop-size 6 --generations 3 --workers 8
 
 
 import argparse
