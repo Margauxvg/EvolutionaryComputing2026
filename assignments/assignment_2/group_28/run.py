@@ -5,7 +5,6 @@
 # a quick check before a long batch: tiny budget, kept apart from the real results by --tag
 #    uv run assignments/assignment_2/group_28/run.py --tag smoke --seed 1 2 --pop-size 6 --generations 3 --workers 8
 
-
 import argparse
 import csv
 import json
@@ -32,16 +31,11 @@ def apply_overrides(overrides: dict) -> None:
     if overrides.get("generations"):
         config.NUM_GENERATIONS = overrides["generations"]
     if overrides.get("sigma") is not None:
-        # Both must move together: the two variants only differ by HOW sigma is controlled,
-        # never by where it starts. mutation.make_mutation enforces this too, as a second
-        # guard for the case config.py itself is edited without going through here.
         config.STATIC_SIGMA = overrides["sigma"]
         config.ADAPTIVE_INITIAL_SIGMA = overrides["sigma"]
 
 
 def body_name() -> str:
-    # The body is fixed (simulate.build_robot builds the John Set gecko), so this is only the
-    # folder label. run_info.json also records the hinge count read from the compiled model.
     return config.BODY_NAME
 
 
@@ -52,13 +46,7 @@ def run_dir(tag: str, variant: str, seed: int) -> Path:
 
 
 def is_done(tag: str, variant: str, seed: int) -> bool:
-    """True if this (tag, body, variant, seed) already has a complete result.
-
-    Checked against run_info.json rather than the CSV: run_info.json is written only at the
-    very end of run(), after the CSV, best.npy and the file itself are all in place. A run
-    that crashed or was interrupted mid-write leaves no run_info.json, so it is correctly
-    treated as not done and gets re-run.
-    """
+    """True if this (tag, body, variant, seed) already has a complete result."""
     return (run_dir(tag, variant, seed) / "run_info.json").exists()
 
 
@@ -84,11 +72,7 @@ def make_row(
         "num_scored_mutations": getattr(mutation, "last_num_scored", 0),
         "num_mutated": getattr(mutation, "last_num_mutated", 0),
         "mean_genotype_spread": round(ea.genotype_spread(population), 6),
-        # Failed controllers among this generation's NEW evaluations (offspring, or the whole
-        # population at generation 0 and for the baseline), not among the survivors.
         "num_nan": ea.last_num_failed,
-        # Initial population plus POP_SIZE new individuals per generation. Identical for the
-        # EA and the baseline, which is what makes the comparison equal-budget.
         "evaluations": config.POP_SIZE * (generation + 1),
     }
 
@@ -103,8 +87,6 @@ def run(variant: str, seed: int, tag: str) -> Path:
     mutation = mutation_module.make_mutation(variant, rng)
     sigma_start = getattr(mutation, "sigma", None)
 
-    # Generation 0: the evaluated initial population, before any variation, so every
-    # variant's curve starts from the same point.
     rows = [make_row(0, variant, seed, population, sigma_start, mutation)]
 
     best = min(population, key=lambda ind: ind.fitness_)
@@ -117,7 +99,6 @@ def run(variant: str, seed: int, tag: str) -> Path:
         population = ea.run_generation(variant, population, mutation, rng)
         rows.append(make_row(generation, variant, seed, population, sigma_used, mutation))
 
-        # Best-so-far, tracked here because the baseline replaces its whole population.
         current = min(population, key=lambda ind: ind.fitness_)
         if current.fitness_ < best_fitness:
             best_fitness, best_generation = current.fitness_, generation
@@ -220,8 +201,6 @@ def run_all(
             run_job(job)
             print(f"  [{done}/{len(jobs)}]", flush=True)
     else:
-        # "spawn" on every platform: it is the macOS default, and using it everywhere means
-        # Linux and macOS runs behave the same.
         with mp.get_context("spawn").Pool(processes=workers) as pool:
             for done, _ in enumerate(pool.imap_unordered(run_job, jobs), start=1):
                 print(f"  [{done}/{len(jobs)}]", flush=True)
