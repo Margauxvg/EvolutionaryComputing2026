@@ -1,31 +1,19 @@
-"""Watch the robot in the MuJoCo viewer, using simulate.py + controller.py + config.py.
+# Watch the robot in the MuJoCo viewer, using simulate.py + controller.py + config.py.
+# Run from the project root:
+# random weights: rhythmic wiggling, no direction yet
+    # uv run assignments/assignment_2/group_28/watch.py
+# quick throwaway search first (NOT the real EA), then watch the best
+    # uv run assignments/assignment_2/group_28/watch.py --quick-evolve 20
+# watch a saved genotype (e.g. the best one from a real EA run)
+    # uv run assignments/assignment_2/group_28/watch.py --load best.npy
 
-Uses the SAME body, controller and control application (DELTA, clipping, NaN
-guard) as the EA, because it goes through simulate.Simulator. What you see here
-is exactly what gets scored.
+# --quick-evolve also saves the best genotype to quick_best.npy, so you can
+# reload it with --load without searching again
 
-Run from the project root:
-
-    # random weights: rhythmic wiggling, no direction yet
-    uv run assignments/assignment_2/group_28/watch.py
-
-    # quick throwaway search first (NOT the real EA), then watch the best
-    uv run assignments/assignment_2/group_28/watch.py --quick-evolve 20
-
-    # watch a saved genotype (e.g. the best one from a real EA run)
-    uv run assignments/assignment_2/group_28/watch.py --load best.npy
-
---quick-evolve also saves the best genotype to quick_best.npy, so you can
-reload it with --load without searching again. Close the window to exit.
-The target is 2 m along the +x axis (red axis in the viewer) from the spawn.
-"""
-
-# Standard library
 import argparse
 import time
 from pathlib import Path
 
-# Third-party libraries
 import mujoco as mj
 import numpy as np
 from mujoco import viewer
@@ -43,9 +31,7 @@ def quick_evolve(
 ) -> np.ndarray:
     """A tiny (5 + 10) mutation-only search, just to get something that moves.
 
-    Throwaway demo code: fixed sigma, no logging, one seed. The real EA and
-    its 1/5-rule variant live in their own files.
-    """
+    Throwaway demo code: fixed sigma, no logging, one seed."""
     mu, lam, sigma = 5, 10, 0.3
     parents = [rng.normal(scale=0.5, size=n) for _ in range(mu)]
     fitness = [sim.evaluate(g) for g in parents]
@@ -112,7 +98,7 @@ def main() -> None:
           f"(started {start_distance:.1f} m away)")
 
     # Reset and attach the Simulator's own callback, so the viewer applies
-    # actions exactly as the EA's rollouts do.
+    # actions exactly as the EA's rollouts do
     mj.set_mjcb_control(None)
     mj.mj_resetData(sim.model, sim.data)
     mj.mj_forward(sim.model, sim.data)
