@@ -12,10 +12,8 @@ from simulate import get_simulator
 # Built on first use, once per process. MuJoCo models do not pickle).
 _SIM = None
 
-# Failed controllers (NaN/inf, scored WORST_FITNESS) among the individuals the LAST evaluate() call
-# scored: the new offspring, or the whole population at generation 0 and for the baseline.
-# run.py logs this. Counting failures in the population after survivor selection instead would
-# almost always give 0, because a failed controller is never selected.
+# NaN/inf controllers (WORST_FITNESS) in the batch the last evaluate() call scored. Counted here
+# and not among the survivors
 last_num_failed = 0
 
 
@@ -33,7 +31,7 @@ def genotype_length() -> int:
 
 
 def evaluate(population: Population) -> Population:
-    """Score every individual that does not have a fitness yet. Lower is better."""
+    """Score every individual that does not have a fitness yet. LOWER IS BETTER."""
     global last_num_failed
     sim = simulator()
     failed = 0
