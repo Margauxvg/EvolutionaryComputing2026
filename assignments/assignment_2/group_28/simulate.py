@@ -1,72 +1,10 @@
-"""One rollout of the physics simulation, scored. The EA/physics boundary.
-
-WHAT THIS FILE IS FOR
----------------------
-This is the only module in the project that imports MuJoCo. Everything above it
-speaks in numbers - a genotype is a flat float vector, a fitness is one float,
-lower is better - and everything below it speaks in bodies, hinges and contacts.
-
-    flat float vector  ->  [ physics ]  ->  one fitness number
-
-Keeping that boundary here means ea.py, mutation.py and analyze.py never import
-mujoco, so the EA can be unit-tested against a cheap synthetic fitness (a sphere
-function, say) in seconds instead of waiting on rollouts. That matters when the
-research question is about the 1/5 rule rather than about robots.
-
-HOW TO USE IT
--------------
-Build one Simulator per process, then call `evaluate` many times:
-
-    from simulate import get_simulator
-
-    sim = get_simulator(controller.act)      # compiles the model once
-    fitness = sim.evaluate(genotype)         # ~0.168 s, deterministic
-
-`get_simulator` caches per process, which is what the multiprocessing runner
-needs: MuJoCo models do not pickle, so each worker must build its own. Call it
-inside the worker, never in the parent.
-
-In ea.py, keep the A1 population-level shape and let it delegate:
-
-    def evaluate(population: list[dict]) -> list[dict]:
-        sim = get_simulator(controller.act)
-        for individual in population:
-            if individual.get("fitness") is None:
-                individual["fitness"] = sim.evaluate(individual["genotype"])
-        return population
-
-For the report figures, `rollout(genotype, mode="video")` runs the same physics
-through a renderer instead of the headless runner.
-
-WHAT IT EXPECTS FROM controller.py
-----------------------------------
-A single callable, injected at construction rather than imported, so this module
-can be built and tested before controller.py exists:
-
-    controller_fn(model, data, genotype) -> ndarray of length model.nu,
-                                            already scaled to [-pi/2, pi/2]
-
-Dependency injection also means the walk smoke test can pass a hand-written
-controller straight in without touching this file.
-
-WHAT IT EXPECTS FROM config.py
-------------------------------
-    SPAWN_POS, TARGET_POSITION, SIM_DURATION, CONTROL_ALPHA, WORST_FITNESS
-
-Run `python simulate.py` for a self-test: it prints the controller sizes, the
-genotype length, a fitness from random weights, and the seconds per evaluation.
-"""
-
-# Standard library
 import time
 from typing import Callable, Literal
 
-# Third-party libraries
 import mujoco as mj
 import numpy as np
 import numpy.typing as npt
 
-# Local libraries (ARIEL)
 from ariel.body_phenotypes.robogen_lite.modules.core import CoreModule
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots import john_set
 from ariel.simulation.environments import SimpleFlatWorld
@@ -78,8 +16,6 @@ from ariel.utils.video_recorder import VideoRecorder
 import config
 
 type RolloutModes = Literal["simple", "video", "frame"]
-
-# (model, data, genotype) -> actions. See "WHAT IT EXPECTS FROM controller.py".
 type ControllerFn = Callable[
     [mj.MjModel, mj.MjData, npt.NDArray[np.float64]],
     npt.NDArray[np.float64],
@@ -89,38 +25,19 @@ type ControllerFn = Callable[
 # --------------------------------------------------------------------------- #
 #  Body and world
 # --------------------------------------------------------------------------- #
-# Both copied verbatim from A2_template_2026.py:77 and :91. Decided and FIXED
-# for the whole assignment: changing either changes model.nu and len(data.qpos),
-# and therefore the genotype length, so runs before and after are not comparable.
-
 
 def build_world() -> SimpleFlatWorld:
-    """The environment. A2_template_2026.py:77."""
+    """Create the environment the robot lives in. A2_template_2026.py:77."""
     return SimpleFlatWorld()
 
 
 def build_robot() -> CoreModule:
-    """The body: the John Set gecko. 6 hinges, 12 controller inputs, 108 weights.
-
-    NOT `prebuilt_robots.gecko.gecko()`, which is what A2_template_2026.py:105 imports. ariel
-    ships TWO different functions called gecko(), in two different modules, and they are
-    different bodies - the template's has 8 hinges and 132 weights. The brief requires a body
-    from the John Set ("Body: free choice from the 'John Set'"), so the module is named
-    explicitly here rather than importing the bare name, because importing `gecko` by itself is
-    exactly how the wrong one got used for the first week.
-
-    Chosen over john_set.spider_8 on seed-to-seed spread, not on mean: report/body_pilot.md.
-    """
+    """Create the robot body. The body: the John Set gecko. 6 hinges, 12 controller inputs, 108 weights."""
     return john_set.gecko()
 
 
 def get_core_position(data: mj.MjData) -> npt.NDArray[np.float64]:
-    """The core's (x, y, z) world position. A2_template_2026.py:206.
-
-    The robot spawns with a free joint, so data.qpos[0:3] IS the core position -
-    no tracker needed. `.copy()` matters: qpos is a live view into the MuJoCo
-    state and will change under you on the next step.
-    """
+    """Return the robot core's current (x, y, z) world position. A2_template_2026.py:206."""
     return np.asarray(data.qpos[0:3]).copy()
 
 
@@ -130,12 +47,7 @@ def get_core_position(data: mj.MjData) -> npt.NDArray[np.float64]:
 
 
 class Simulator:
-    """Compiles the world once, then scores genotypes against it.
-
-    The compile-once/evaluate-many split is worth roughly 1.25x (measured in
-    phase1_timing.py, 25 Sep). Everything else is physics stepping, so there is
-    no further speedup to chase here.
-    """
+    """Compiles the world once, then scores genotypes against it."""
 
     def __init__(
         self,
@@ -151,43 +63,40 @@ class Simulator:
             target_position if target_position is not None else config.TARGET_POSITION
         )
 
-        # MuJoCo's control callback is a GLOBAL. Clear it before building
-        # anything. A2_template_2026.py:250 - "DO NOT REMOVE".
+        # MuJoCo's control callback is a GLOBAL. Clear it. DO NOT REMOVE.
         mj.set_mjcb_control(None)
 
-        # Spawn and compile. A2_template_2026.py:253-264.
+        # Wolrd and robot
         world = build_world()
         robot = build_robot()
+       
         world.spawn(
             robot.spec,
             position=self.spawn_pos,
             correct_collision_with_floor=True,
         )
+        
+        # Compile the world into a model
         self.model = world.spec.compile()
-
-        # MuJoCo resets the simulation when it becomes unstable, which sets data.time back to 0.
-        # simple_runner steps until data.time reaches the duration, so an unstable controller would
-        # replay forever. With the reset off, the state turns to NaN instead, the NaN guard in the
-        # control callback catches it, and the controller gets WORST_FITNESS like any failed one.
-        # Found on 1 Oct: the speed test hung on seed 13 (MUJOCO_LOG.TXT: "Nan, Inf or huge value
-        # in QACC ... Time = 12.0820"). Normal evaluations are unchanged by this flag.
-        self.model.opt.disableflags |= mj.mjtDisableBit.mjDSBL_AUTORESET
-
         self.data = mj.MjData(self.model)
 
-        # Clean, known state before reading anything. A2_template_2026.py:267.
+        # By default MuJoCo resets the simulation when it becomes unstable, which sets
+        # data.time back to 0, so simple_runner would replay forever (seen on 1 Oct: the speed
+        # test hung on seed 13). With autoreset off the state turns to NaN instead, the NaN
+        # guard in the callback catches it, and the controller scores WORST_FITNESS.
+        self.model.opt.disableflags |= mj.mjtDisableBit.mjDSBL_AUTORESET
+
+
+        # Clean, known state before reading anything
         mj.mj_resetData(self.model, self.data)
         mj.mj_forward(self.model, self.data)
 
-        # Sizes come from the compiled model, never hardcoded. They depend on
-        # the body chosen above. A2_template_2026.py:273-274.
         self.output_size: int = self.model.nu
         self.qpos_size: int = len(self.data.qpos)
 
-        # Set by the control callback when the network emits NaN; see _make_callback.
+        # Set by the control callback when the network emits NaN; see _make_callback
         self._nan_seen: bool = False
 
-    # -- the hot path -------------------------------------------------------- #
 
     def evaluate(self, genotype: npt.NDArray[np.float64]) -> float:
         """Score one genotype. LOWER IS BETTER. Called once per individual."""
@@ -199,25 +108,11 @@ class Simulator:
         mode: RolloutModes = "simple",
         video_folder: str | None = None,
     ) -> float:
-        """One full simulation, scored.
-
-        `mode="simple"` is headless and is what the EA uses. "video" and "frame"
-        run identical physics through a renderer - use them for report figures,
-        never inside the evolutionary loop.
-        """
+        """One full simulation, scored."""
         genotype = np.asarray(genotype, dtype=np.float64)
 
-        # Reset BEFORE reading the start position, not after.
-        #
-        # simple_runner calls mj_resetData itself (ariel/utils/runners.py:30), so
-        # it is tempting to skip this. Don't: on the second and later calls of a
-        # reused Simulator, data still holds the PREVIOUS rollout's end state, and
-        # reading initial_position here would silently give you that instead of
-        # the spawn. It is finite, plausible, and poisons fitness_delta_distance.
-        # Resetting twice is harmless; resetting once, too late, is not.
-        #
-        # The reset also zeroes data.ctrl and data.time, which DELTA control and
-        # any sin(2*pi*f*t) oscillator input both rely on starting from zero.
+        # Start from a clean state: the reset also zeroes data.ctrl and data.time, which DELTA
+        # control and the sin/cos clock input both rely on
         mj.set_mjcb_control(None)
         mj.mj_resetData(self.model, self.data)
         mj.mj_forward(self.model, self.data)
@@ -243,58 +138,35 @@ class Simulator:
                 case "frame":
                     single_frame_renderer(self.model, self.data, steps=1, show=True)
         finally:
-            # Detach again so the next rollout starts clean, even if the run
-            # raised. A2_template_2026.py:321.
             mj.set_mjcb_control(None)
 
-        # A NaN controller produced no meaningful motion, so the final position
-        # is meaningless too. Score it worst-possible rather than returning a
-        # number that looks fine. Never return None: it would crash the
-        # `min(contestants, key=...)` in tournament selection (A1 ea.py:35).
         if self._nan_seen:
             return config.WORST_FITNESS
 
         final_position = get_core_position(self.data)
 
-        # Planar Euclidean distance to the target, lower is better. Imported
-        # rather than reimplemented: ariel/simulation/tasks/targeted_locomotion.py:9.
-        # The delta-distance variant on :14 is the alternative we considered -
-        # if we switch, switch once and say so in Methods.
         return distance_to_target(final_position, self.target)
 
-    # -- internals ----------------------------------------------------------- #
 
     def _make_callback(self, genotype: npt.NDArray[np.float64]):
-        """Build the per-rollout control callback bound to this genotype.
-
-        Built fresh each rollout on purpose. A module-level callback reading a
-        shared `weights` variable is the classic way to evolve against the wrong
-        genotype without any error being raised.
-        """
+        """Per-rollout control callback bound to this genotype."""
 
         def control_callback(m: mj.MjModel, d: mj.MjData) -> None:
             """MuJoCo calls this every physics step. A2_template_2026.py:278."""
             actions = self.controller_fn(m, d, genotype)
 
-            # Blown-up weights write NaN into data.ctrl silently, the simulation
-            # carries on, and the run returns a plausible-looking fitness. Flag
-            # it and hold still instead. A2_template_2026.py:126 warns about this.
+            # Blown-up weights write NaN into data.ctrl silently. Flag
+            # it and hold still instead
             if not np.all(np.isfinite(actions)):
                 self._nan_seen = True
                 d.ctrl[:] = 0.0
-                # If the physics went unstable, the state itself is now NaN, and stepping a NaN
-                # state makes MuJoCo print a warning on every remaining step (thousands of lines).
-                # The result is WORST_FITNESS either way, so put back a finite state and move the
-                # clock to the end: simple_runner then stops after its current batch of steps.
                 d.qpos[:] = m.qpos0
                 d.qvel[:] = 0.0
                 d.time = self.duration
                 return
 
-            # DELTA application, per the controller contract at
-            # A2_template_2026.py:121-125: smoother than DIRECT, which can
-            # destabilise the sim on large jumps, but it accumulates, so the clip
-            # is required rather than optional. Chosen once, used everywhere.
+            # DELTA control: smoother than direct targets, but it accumulates, so the clip is
+            # required.
             d.ctrl[:] += actions * config.CONTROL_ALPHA
             d.ctrl[:] = np.clip(d.ctrl, -np.pi / 2, np.pi / 2)
 
@@ -309,65 +181,8 @@ _SIMULATOR: Simulator | None = None
 
 
 def get_simulator(controller_fn: ControllerFn, **kwargs) -> Simulator:
-    """Return this process's Simulator, building it on first call.
-
-    MuJoCo models cannot be pickled, so a multiprocessing worker cannot receive
-    one from the parent - it has to compile its own. Calling this inside the
-    worker gets each process exactly one compile instead of one per individual.
-    """
+    """Return this process's Simulator, building it on first call."""
     global _SIMULATOR
     if _SIMULATOR is None:
         _SIMULATOR = Simulator(controller_fn, **kwargs)
     return _SIMULATOR
-
-
-# --------------------------------------------------------------------------- #
-#  Self-test
-# --------------------------------------------------------------------------- #
-
-
-def _demo_controller_factory(qpos_size: int, output_size: int, hidden: int = 6):
-    """PLACEHOLDER, for this file's self-test only - controller.py replaces it.
-
-    Reproduces the template's bare architecture (A2_template_2026.py:135): raw
-    qpos in, one tanh hidden layer, tanh out, rescaled to the hinge range. The
-    real controller adds sin/cos(2*pi*f*t) and the vector to the target, without
-    which there is nothing to drive a gait and nothing to steer by.
-    """
-    length = qpos_size * hidden + hidden * output_size
-
-    def act(m: mj.MjModel, d: mj.MjData, genotype: npt.NDArray[np.float64]):
-        assert len(genotype) == length, f"expected {length} weights, got {len(genotype)}"
-        split = qpos_size * hidden
-        w1 = genotype[:split].reshape(qpos_size, hidden)
-        w2 = genotype[split:].reshape(hidden, output_size)
-        layer1 = np.tanh(d.qpos @ w1)
-        return np.tanh(layer1 @ w2) * (np.pi / 2)
-
-    return act, length
-
-
-if __name__ == "__main__":
-    rng = np.random.default_rng(config.DEFAULT_SEED)
-
-    probe = Simulator(lambda m, d, g: np.zeros(m.nu))
-    act, genotype_length = _demo_controller_factory(probe.qpos_size, probe.output_size)
-
-    sim = Simulator(act)
-    print(f"controller inputs (len(data.qpos)) : {sim.qpos_size}")
-    print(f"controller outputs (model.nu)      : {sim.output_size}")
-    print(f"genotype length (total weights)    : {genotype_length}")
-
-    genotype = rng.normal(scale=0.5, size=genotype_length)
-
-    started = time.perf_counter()
-    fitness = sim.evaluate(genotype)
-    elapsed = time.perf_counter() - started
-    print(f"fitness (lower is better)          : {fitness:.4f}")
-    print(f"seconds per evaluation             : {elapsed:.3f}")
-
-    # Determinism: the same genotype must score identically on a reused
-    # Simulator. If this ever prints a non-zero difference, the reset discipline
-    # in rollout() has been broken and the 1/5 success measure is unreliable.
-    repeat = sim.evaluate(genotype)
-    print(f"determinism (repeat - first)       : {repeat - fitness:.2e}")
