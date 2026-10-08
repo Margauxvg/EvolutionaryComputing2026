@@ -1,23 +1,3 @@
-"""Neural controller: maps the robot's state to hinge targets.
- 
-    act(model, data, genotype) -> ndarray of length model.nu, scaled to [-pi/2, pi/2]
-    genotype_length(model), input_size(model)    sizes, read from the compiled model
- 
-`act` only computes actions. simulate.py applies them (DELTA, clipping, NaN guard), so there is
-one place that decides how commands reach the motors.
- 
-Network: inputs (nu + 6) --tanh--> hidden (HIDDEN_SIZE) --tanh--> nu outputs * pi/2
-genotype = [w1.ravel(), w2.ravel()]. The bias is a constant input of 1.0, so there is no bias
-vector in the genotype.
- 
-Inputs, in this order:
-    qpos[7:]             hinge angles                             nu values
-    sin, cos (2 pi f t)  clock, to drive rhythmic motion          2 values
-    target direction     unit vector in the robot's own frame     2 values
-    target distance      / DIST_SCALE, clipped to [0, 2]          1 value
-    1.0                  bias                                     1 value
-"""
-
 import math
 import time
 
@@ -89,15 +69,8 @@ _INPUT_BUFFER: npt.NDArray[np.float64] | None = None
 
 def build_inputs(data: mj.MjData) -> npt.NDArray[np.float64]:
     """Assemble the input vector described in the module docstring.
- 
-    WARNING: returns a SHARED buffer that is overwritten on the next call. `act` consumes it
-    immediately, which is safe; never store it or return it out of a rollout without copying.
- 
-    This runs ~7500 times per rollout, hence the buffer and the element-wise indexing. It is
-    bit-identical to the original np.concatenate version: np.arctan2 and np.hypot are kept on
-    purpose, because the `math` versions differ in the last bit and one ULP can move the
-    fitness after 7500 steps of contact physics.
-    """
+
+    Returns a SHARED buffer that is overwritten on the next call; copy it if you need to keep it."""
     global _INPUT_BUFFER
 
     qpos = data.qpos
@@ -110,14 +83,14 @@ def build_inputs(data: mj.MjData) -> npt.NDArray[np.float64]:
 
     buffer[:n_hinges] = qpos[N_FREE_JOINT_QPOS:]
 
-    # Heading (yaw) of the core, from its quaternion (w, x, y, z).
+    # Heading (yaw) of the core, from its quaternion (w, x, y, z)
     w = qpos[3]
     x = qpos[4]
     y = qpos[5]
     z = qpos[6]
     yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
-    # Vector to the target, rotated into the robot's own frame, so the network sees "ahead-left".
+    # Vector to the target, rotated into the robot's own frame, so the network sees "ahead-left"
     dx = TARGET_X - qpos[0]
     dy = TARGET_Y - qpos[1]
     c = math.cos(yaw)
@@ -126,7 +99,7 @@ def build_inputs(data: mj.MjData) -> npt.NDArray[np.float64]:
     ty = -s * dx + c * dy
     dist = np.hypot(tx, ty)
 
-    #  data.time restarts at 0 on every mj_resetData, so the clock starts in the same phase.
+    # data.time restarts at 0 on every mj_resetData, so the clock starts in the same phase.
     phase = TWO_PI * config.CLOCK_FREQ * data.time
 
     buffer[n_hinges] = math.sin(phase)
