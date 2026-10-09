@@ -1,9 +1,8 @@
 # Run from the project root (EvolutionaryComputing2026), for example:
 #   uv run assignments/assignment_2/group_28/main.py --workers 16                  (full experiment: all variants, all 20 seeds)
 #   uv run assignments/assignment_2/group_28/main.py --variant static --seed 101   (one run)
-#   uv run assignments/assignment_2/group_28/main.py --tag smoke --seed 1 2 --pop-size 6 --generations 3 --workers 8   (quick test)
 #
-# Every run is saved in results/<tag>/<body>/<variant>/seed_<seed>/: the per-generation csv, the
+# Every run is saved in results/main/<body>/<variant>/seed_<seed>/: the per-generation csv, the
 # best genotype (best.npy) and run_info.json. Runs that already have a run_info.json are skipped.
 
 import argparse
@@ -25,26 +24,14 @@ import evolve
 from mutation import make_mutation
 
 
-def apply_overrides(overrides: dict) -> None:
-    """Command line overrides of config. Also called inside every worker process, since those
-    import a fresh config."""
-    if overrides.get("pop_size"):
-        config.POP_SIZE = overrides["pop_size"]
-    if overrides.get("generations"):
-        config.NUM_GENERATIONS = overrides["generations"]
-    if overrides.get("sigma") is not None:
-        config.STATIC_SIGMA = overrides["sigma"]
-        config.ADAPTIVE_INITIAL_SIGMA = overrides["sigma"]
-
-
-def run_dir(tag: str, variant: str, seed: int) -> Path:
-    path = config.RESULTS_DIR / tag / config.BODY_NAME / variant / f"seed_{seed}"
+def run_dir(variant: str, seed: int) -> Path:
+    path = config.RESULTS_DIR / config.BODY_NAME / variant / f"seed_{seed}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def is_done(tag: str, variant: str, seed: int) -> bool:
-    return (run_dir(tag, variant, seed) / "run_info.json").exists()
+def is_done(variant: str, seed: int) -> bool:
+    return (run_dir(variant, seed) / "run_info.json").exists()
 
 
 def make_row(generation: int, variant: str, seed: int, population, sigma_used: float | None, mutation) -> dict:
@@ -68,7 +55,7 @@ def make_row(generation: int, variant: str, seed: int, population, sigma_used: f
     }
 
 
-def run(variant: str, seed: int, tag: str) -> Path:
+def run(variant: str, seed: int) -> Path:
     rng = np.random.default_rng(seed)
     random.seed(seed)
     set_seed(seed)
@@ -102,7 +89,7 @@ def run(variant: str, seed: int, tag: str) -> Path:
                   f"best {best_fitness:.4f} ({elapsed:.0f}s)", flush=True)
 
     wall = time.perf_counter() - started
-    folder = run_dir(tag, variant, seed)
+    folder = run_dir(variant, seed)
 
     with (folder / config.RESULT_FILE_NAME).open("w", newline="") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=config.CSV_COLUMNS)
@@ -113,7 +100,6 @@ def run(variant: str, seed: int, tag: str) -> Path:
 
     evaluations = config.POP_SIZE * (config.NUM_GENERATIONS + 1)
     info = {
-        "tag": tag,
         "body": config.BODY_NAME,
         "hinges": int(evolve.MODEL.nu),
         "genotype_length": int(best_genotype.size),
@@ -147,20 +133,18 @@ def run(variant: str, seed: int, tag: str) -> Path:
 
 def run_job(job: tuple) -> None:
     """One (variant, seed) run, in this process or in a worker."""
-    variant, seed, tag, overrides, force = job
-    apply_overrides(overrides)
+    variant, seed, force = job
 
-    if not force and is_done(tag, variant, seed):
+    if not force and is_done(variant, seed):
         print(f"{variant} seed={seed} already done, skipped", flush=True)
         return
-    run(variant, seed, tag)
+    run(variant, seed)
 
 
-def run_all(variants: list[str], seeds: list[int], tag: str, overrides: dict, workers: int, force: bool) -> None:
-    jobs = [(variant, seed, tag, overrides, force) for variant in variants for seed in seeds]
-    apply_overrides(overrides)
+def run_all(variants: list[str], seeds: list[int], workers: int, force: bool) -> None:
+    jobs = [(variant, seed, force) for variant in variants for seed in seeds]
     print(f"{len(jobs)} runs: variants={variants} seeds={seeds} pop={config.POP_SIZE} "
-          f"generations={config.NUM_GENERATIONS} workers={workers} tag={tag}", flush=True)
+          f"generations={config.NUM_GENERATIONS} workers={workers}", flush=True)
 
     started = time.perf_counter()
     if workers <= 1:
@@ -182,17 +166,11 @@ def main() -> None:
                         help="Variant(s) to run. Defaults to: %(default)s.")
     parser.add_argument("--seed", type=int, nargs="*", default=list(config.SEEDS),
                         help="Seed(s) to run. Defaults to config.SEEDS.")
-    parser.add_argument("--pop-size", type=int, help="Overrides config.POP_SIZE.")
-    parser.add_argument("--generations", type=int, help="Overrides config.NUM_GENERATIONS.")
-    parser.add_argument("--sigma", type=float,
-                        help="Overrides both config.STATIC_SIGMA and config.ADAPTIVE_INITIAL_SIGMA.")
-    parser.add_argument("--tag", default="main", help="Results subfolder. Defaults to: %(default)s.")
     parser.add_argument("--workers", type=int, default=1, help="Runs in parallel. Defaults to: %(default)s.")
     parser.add_argument("--force", action="store_true", help="Also redo runs that are already done.")
     args = parser.parse_args()
 
-    overrides = {"pop_size": args.pop_size, "generations": args.generations, "sigma": args.sigma}
-    run_all(args.variant, args.seed, args.tag, overrides, args.workers, args.force)
+    run_all(args.variant, args.seed, args.workers, args.force)
 
 
 if __name__ == "__main__":

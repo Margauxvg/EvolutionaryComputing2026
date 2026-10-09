@@ -1,7 +1,6 @@
 # Makes the figures and statistics for the report from main.py's results. Run from the project root:
-#   uv run assignments/assignment_2/group_28/plots.py              (the main experiment)
-#   uv run assignments/assignment_2/group_28/plots.py --tag smoke
-# Everything is written to results/<tag>/<body>/analysis/.
+#   uv run assignments/assignment_2/group_28/plots.py
+# Everything is written to results/main/<body>/analysis/.
 
 import argparse
 import json
@@ -27,6 +26,9 @@ COLORS = {
     "adaptive_cap1": "#ff7f0e",
     "baseline": "#7f7f7f",
 }
+# The second adaptive variant is a check on the upper bound, not a separate treatment, so it is
+# drawn dotted in the fitness plot to keep the main comparison readable
+LINESTYLES = {"adaptive_cap1": ":"}
 LABELS = {
     "static": rf"fixed $\sigma = {config.STATIC_SIGMA}$",
     "adaptive": rf"1/5 rule, $\sigma_{{\max}} = {config.ADAPTIVE_MAX_SIGMA}$",
@@ -51,9 +53,9 @@ def sample_std(values: list[float]) -> float:
 # Load data
 # ---------------------------------------------------------------------------
 
-def load_seed_runs(tag: str, body: str, variant: str) -> list[pd.DataFrame]:
+def load_seed_runs(body: str, variant: str) -> list[pd.DataFrame]:
     """One dataframe per seed folder, with an extra best_so_far column."""
-    variant_dir = config.RESULTS_DIR / tag / body / variant
+    variant_dir = config.RESULTS_DIR / body / variant
     if not variant_dir.exists():
         return []
 
@@ -133,7 +135,7 @@ def plot_fitness(curves: dict[str, Curve], output_path: Path, title: str) -> Non
             continue
         curve = curves[variant]
         ax.plot(curve.generations, curve.mean, label=f"{LABELS[variant]} (n={len(curve.seeds)})",
-                color=COLORS[variant])
+                color=COLORS[variant], linestyle=LINESTYLES.get(variant, "-"), lw=1.8)
         ax.fill_between(curve.generations, curve.mean - curve.std, curve.mean + curve.std,
                         color=COLORS[variant], alpha=0.15)
     ax.set_xlabel("generation")
@@ -314,11 +316,11 @@ def summary_table(curves: dict[str, Curve], runs: dict[str, list[pd.DataFrame]],
 # Main
 # ---------------------------------------------------------------------------
 
-def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> None:
+def analyze(body: str, plateau_eps: float, plateau_window: int) -> None:
     runs: dict[str, list[pd.DataFrame]] = {}
     curves: dict[str, Curve] = {}
     for variant in VARIANT_ORDER:
-        variant_runs = load_seed_runs(tag, body, variant)
+        variant_runs = load_seed_runs(body, variant)
         curve = make_curve(variant, variant_runs)
         if curve is None:
             print(f"  no seeds found for {variant}")
@@ -328,12 +330,12 @@ def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> Non
         print(f"  {variant}: {len(curve.seeds)} seed(s) {curve.seeds}")
 
     if not curves:
-        print(f"No results found for tag={tag}, body={body}")
+        print(f"No results found in {config.RESULTS_DIR / body}")
         return
 
-    output_dir = config.RESULTS_DIR / tag / body / "analysis"
+    output_dir = config.RESULTS_DIR / body / "analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
-    title = f"{body}, tag={tag}"
+    title = ""  # the report gives every figure a caption
 
     plot_fitness(curves, output_dir / "fitness_curve.png", title)
     plot_sigma(curves, output_dir / "sigma_curve.png", title)
@@ -363,7 +365,6 @@ def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> Non
     }
 
     summary = {
-        "tag": tag,
         "body": body,
         "plateau_eps": plateau_eps,
         "plateau_window": plateau_window,
@@ -395,14 +396,12 @@ def analyze(tag: str, body: str, plateau_eps: float, plateau_window: int) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Figures and statistics for the report.")
-    parser.add_argument("--tag", default="main", help="Results tag. Defaults to: %(default)s.")
-    parser.add_argument("--body", default=config.BODY_NAME, help="Body subfolder. Defaults to: %(default)s.")
     parser.add_argument("--plateau-eps", type=float, default=0.02,
                         help="Improvement (m) that still counts as progress. Defaults to: %(default)s.")
     parser.add_argument("--plateau-window", type=int, default=20,
                         help="Generations the improvement is measured over. Defaults to: %(default)s.")
     args = parser.parse_args()
-    analyze(args.tag, args.body, args.plateau_eps, args.plateau_window)
+    analyze(config.BODY_NAME, args.plateau_eps, args.plateau_window)
 
 
 if __name__ == "__main__":

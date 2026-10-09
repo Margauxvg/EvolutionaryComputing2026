@@ -1,7 +1,7 @@
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RESULTS_DIR: Path = HERE / "results"
+RESULTS_DIR: Path = HERE / "results" / "main"  # results of the main experiment
 RESULT_FILE_NAME: str = "fitness_overview.csv"
 
 # Task: walk from the spawn point to a target 2 m in front of it
