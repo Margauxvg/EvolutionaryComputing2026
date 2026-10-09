@@ -1,16 +1,14 @@
-# Extra per-seed analysis on top of plots.py (not needed for the report figures). Run from the project root:
-#   uv run assignments/assignment_2/group_28/extras/diagnostics.py --tag main
+# Per-run details on top of plots.py: the last generation each run improved by more than 0.01 m,
+# the sigma summary, and the sigma / success rate analysis repeated without the runs that (almost)
+# reached the target (both promised in Methods). Run from the project root, after plots.py:
+#   uv run assignments/assignment_2/group_28/diagnostics.py
 # Writes per_seed_detail.csv, sigma_summary.csv and the sigma / success rate plots without the
-# saturated runs to results/<tag>/<body>/analysis/.
+# saturated runs to results/main/<body>/analysis/.
 
 import argparse
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import config
 import plots
@@ -100,15 +98,14 @@ def sigma_summary(detail: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Per-seed diagnostics.")
-    parser.add_argument("--tag", default="main")
-    parser.add_argument("--body", default=config.BODY_NAME)
-    args = parser.parse_args()
+    parser.parse_args()  # no options, but gives --help
 
-    runs = {variant: plots.load_seed_runs(args.tag, args.body, variant) for variant in plots.VARIANT_ORDER}
+    body = config.BODY_NAME
+    runs = {variant: plots.load_seed_runs(body, variant) for variant in plots.VARIANT_ORDER}
     runs = {variant: dfs for variant, dfs in runs.items() if dfs}
-    output_dir = config.RESULTS_DIR / args.tag / args.body / "analysis"
+    output_dir = config.RESULTS_DIR / body / "analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
-    title = f"{args.body}, tag={args.tag}"
+    title = "without runs that ended within 0.15 m of the target"
 
     detail = per_seed_detail(runs)
     detail.to_csv(output_dir / "per_seed_detail.csv", index=False)
@@ -123,9 +120,9 @@ def main() -> None:
             curve = plots.make_curve(variant, kept)
             if curve is not None:
                 unsaturated[variant] = curve
-        plots.plot_sigma(unsaturated, output_dir / "sigma_curve_unsaturated.png", f"{title}, without saturated runs")
+        plots.plot_sigma(unsaturated, output_dir / "sigma_curve_unsaturated.png", title)
         plots.plot_success_rate(unsaturated, output_dir / "success_rate_curve_unsaturated.png",
-                                f"{title}, without saturated runs")
+                                title)
 
     print(detail.to_string(index=False))
     print()

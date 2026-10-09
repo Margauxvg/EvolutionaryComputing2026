@@ -85,7 +85,7 @@ class Simulator:
             brain.split_weights, brain.hinge_targets = original
 
 HERE = Path(__file__).resolve().parent
-RESULTS_DIR = getattr(config, "RESULTS_DIR", HERE / "results")
+RESULTS_DIR = HERE / "results"  # pilot results stay in extras/, apart from the main experiment
 
 
 def write_csv(name: str, rows: list[dict]) -> Path:
