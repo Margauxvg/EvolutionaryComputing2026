@@ -2,12 +2,12 @@
 
 Run from the project root (takes a few seconds):
 
-    uv run assignments/assignment_2/group_28/test_sphere.py
+    uv run assignments/assignment_2/group_28/extras/sphere_check.py
 
 The objective is a shifted sphere, f(x) = sum((x - 1)^2), the standard problem the 1/5 rule
-was analysed on. ea.simulator and ea.genotype_length are swapped for stand-ins, so ea.py,
-mutation.py and the selection code run exactly as in the real experiment - only the fitness
-is different. If a check here fails, the bug is in the EA, not in the robot.
+was analysed on. simulation.evaluate and evolve.genotype_length are swapped for stand-ins, so
+evolve.py, mutation.py and the selection code run exactly as in the real experiment - only the
+fitness is different. If a check here fails, the bug is in the EA, not in the robot.
 
 What it checks
 --------------
@@ -22,33 +22,33 @@ What it checks
 8. adaptive_cap1 starts like adaptive and never exceeds its own, lower, sigma bound.
 """
 
-# Standard library
 import random
+import sys
+from pathlib import Path
 
-# Third-party libraries
 import numpy as np
 
 from ariel.ec import set_seed
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import config
-import ea
-import mutation as mutation_module
+import evolve
+import simulation
+from mutation import make_mutation
 
 N_GENES = 30
 POP_SIZE = 20
 GENERATIONS = 150
 
 
-class SphereSimulator:
-    """Stands in for simulate.Simulator: same evaluate() signature, no MuJoCo."""
-
-    @staticmethod
-    def evaluate(genotype: np.ndarray) -> float:
-        return float(np.sum((genotype - 1.0) ** 2))
+def sphere(genotype, model, data) -> float:
+    """Stands in for simulation.evaluate: same signature, no MuJoCo."""
+    return float(np.sum((np.asarray(genotype, dtype=np.float64) - 1.0) ** 2))
 
 
-ea.simulator = lambda: SphereSimulator()
-ea.genotype_length = lambda: N_GENES
+simulation.evaluate = sphere
+evolve.genotype_length = lambda: N_GENES
 config.POP_SIZE = POP_SIZE
 
 
@@ -57,17 +57,17 @@ def run(variant: str, seed: int) -> dict:
     random.seed(seed)
     set_seed(seed)
 
-    population = ea.evaluate(ea.init_population(rng, size=POP_SIZE))
-    mutation = mutation_module.make_mutation(variant, rng)
+    population = evolve.evaluate(evolve.init_population(rng))
+    mutation = make_mutation(variant, rng)
     gen0 = sorted(ind.fitness_ for ind in population)
     best_so_far = min(gen0)
     sigmas, rates = [], []
 
     for _ in range(GENERATIONS):
         sigmas.append(getattr(mutation, "sigma", None))
-        population = ea.run_generation(variant, population, mutation, rng)
+        population = evolve.run_generation(variant, population, mutation, rng)
         rates.append(getattr(mutation, "last_success_rate", None))
-        best_so_far = min(best_so_far, ea.fitness_stats(population)[0])
+        best_so_far = min(best_so_far, evolve.fitness_stats(population)[0])
 
     return {"gen0": gen0, "best": best_so_far, "sigmas": sigmas, "rates": rates,
             "final_size": len(population)}

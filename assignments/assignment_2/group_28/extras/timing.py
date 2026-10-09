@@ -11,7 +11,7 @@ and then prints a budget table so you can pick pop_size / generations / seeds fr
 measured numbers instead of guessing.
 
 Run from the project root:
-    uv run assignments/assignment_2/group_28/phase1_timing.py
+    uv run assignments/assignment_2/group_28/extras/timing.py
 """
 
 import time
@@ -149,7 +149,7 @@ def check_determinism(n_in: int, n_out: int) -> None:
 def budget_table(seconds_per_eval: float, n_cores: int) -> None:
     print("=== BUDGET (wall-clock hours for the FULL experiment) ===")
     print(f"  assuming {seconds_per_eval:.3f} s/eval and {n_cores} parallel processes")
-    print(f"  3 configurations (static, adaptive, baseline)\n")
+    print("  3 configurations (static, adaptive, baseline)\n")
     print(f"  {'pop':>5} {'gens':>6} {'seeds':>6} {'evals/run':>10} {'total evals':>12} {'hours':>8}")
     for pop in (20, 30, 50):
         for gens in (50, 100, 200):

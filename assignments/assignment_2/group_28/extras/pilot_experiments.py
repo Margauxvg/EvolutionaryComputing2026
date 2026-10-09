@@ -2,18 +2,18 @@
 
 Each subcommand answers one question that is currently an unjustified number in Methods,
 or an assumption nobody has tested. They are cheap, they are throwaway, and their results
-belong in report/stage1_findings.md as evidence rather than in the final EA.
+belong in extras/docs/stage1_findings.md as evidence rather than in the final EA.
 
 Run from the project root:
 
-    uv run assignments/assignment_2/group_28/experiments.py duration
-    uv run assignments/assignment_2/group_28/experiments.py clock
-    uv run assignments/assignment_2/group_28/experiments.py qvel
-    uv run assignments/assignment_2/group_28/experiments.py nan
-    uv run assignments/assignment_2/group_28/experiments.py cache
-    uv run assignments/assignment_2/group_28/experiments.py determ
-    uv run assignments/assignment_2/group_28/experiments.py hidden
-    uv run assignments/assignment_2/group_28/experiments.py sigma
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py duration
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py clock
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py qvel
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py nan
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py cache
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py determ
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py hidden
+    uv run assignments/assignment_2/group_28/extras/pilot_experiments.py sigma
 
 WHAT EACH ONE IS FOR
 --------------------
@@ -23,7 +23,7 @@ WHAT EACH ONE IS FOR
               Turns an unexplained constant into a measured choice.
     qvel      Does giving the network joint velocities help? Three lines of code, and a
               Methods sentence either way.
-    nan       Does the NaN guard in simulate.py actually fire, and does WORST_FITNESS behave?
+    nan       Does the NaN guard in simulation.py actually fire, and does WORST_FITNESS behave?
     cache     What does get_simulator's per-process cache actually buy? Reproduces the
               1.25x model-reuse result through the CURRENT code path.
     determ    Is evaluation bit-identical when the MODEL is rebuilt, and across PROCESSES?
@@ -32,7 +32,7 @@ WHAT EACH ONE IS FOR
     hidden    Prints genotype length against HIDDEN_SIZE. No simulation - this is the
               parameter-count argument for Methods, not a sweep.
     sigma     Which fixed sigma should the static variant use, and does the 1/5 rule end up
-              in the same place whatever sigma it starts from? Runs the REAL EA (ea.py and
+              in the same place whatever sigma it starts from? Runs the REAL EA (evolve.py and
               mutation.py), not the throwaway ES the other probes use.
 
 Results print as a table and are appended to results/<name>.csv so they can be cited.
@@ -52,11 +52,37 @@ import mujoco as mj
 import numpy as np
 import numpy.typing as npt
 
+import sys
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+import brain
 import config
-import controller
-import ea
+import evolve
+import simulation
 from mutation import AdaptiveMutation, StaticMutation
-from simulate import Simulator
+
+
+class Simulator:
+    """The pilots were written for the earlier Simulator class. This keeps that interface on top
+    of simulation.py. `network(model, data, genotype)` can replace the normal network (qvel probe)."""
+
+    def __init__(self, network=None, duration: float = config.SIM_DURATION) -> None:
+        self.model, self.data = simulation.build_world()
+        self.network = network
+        self.duration = duration
+
+    def evaluate(self, genotype) -> float:
+        if self.network is None:
+            return simulation.evaluate(genotype, self.model, self.data, self.duration)
+
+        original = brain.split_weights, brain.hinge_targets
+        brain.split_weights = lambda genotype, model: (genotype, model)
+        brain.hinge_targets = lambda data, genotype, model: self.network(model, data, genotype)
+        try:
+            return simulation.evaluate(genotype, self.model, self.data, self.duration)
+        finally:
+            brain.split_weights, brain.hinge_targets = original
 
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR = getattr(config, "RESULTS_DIR", HERE / "results")
@@ -132,7 +158,7 @@ def experiment_duration(args: argparse.Namespace) -> None:
     if not path.exists():
         raise SystemExit(
             f"No genotype at {path}. Produce one first:\n"
-            "  uv run assignments/assignment_2/group_28/watch.py --quick-evolve 20"
+            "  uv run assignments/assignment_2/group_28/extras/watch.py --quick-evolve 20"
         )
 
     genotype = np.load(path)
@@ -147,7 +173,7 @@ def experiment_duration(args: argparse.Namespace) -> None:
     previous_distance, previous_duration = start_distance, 0.0
 
     for duration in durations:
-        sim = Simulator(controller.act, duration=float(duration))
+        sim = Simulator(duration=float(duration))
         distance = sim.evaluate(genotype)
 
         travelled = start_distance - distance
@@ -212,17 +238,17 @@ def experiment_clock(args: argparse.Namespace) -> None:
     """Run the same short search at several CLOCK_FREQ values.
 
     CLOCK_FREQ sets how fast the sin/cos inputs oscillate, i.e. roughly how many gait
-    cycles per second the network is offered. 1.0 Hz is currently a guess; controller.py
+    cycles per second the network is offered. 1.0 Hz is currently a guess; brain.py
     even says "choose in pilots".
 
     Every sweep uses the SAME seed, so the initial population and every mutation are
-    identical and the only difference is the frequency. controller.CLOCK_FREQ is patched
+    identical and the only difference is the frequency. config.CLOCK_FREQ is patched
     at runtime rather than edited, so config.py is left alone.
 
     Caveat to write down: this is one seed and a 20-generation toy search. It is enough to
     reject an obviously bad frequency, not enough to claim one is optimal.
     """
-    original = controller.CLOCK_FREQ
+    original = config.CLOCK_FREQ
     rows: list[dict] = []
     per_freq: dict[float, list[float]] = {}
 
@@ -234,11 +260,11 @@ def experiment_clock(args: argparse.Namespace) -> None:
     try:
         for freq in args.freqs:
             per_freq[freq] = []
-            controller.CLOCK_FREQ = float(freq)
+            config.CLOCK_FREQ = float(freq)
             # Rebuilt per frequency but not per seed: the body does not depend on the clock,
             # and compiling once per frequency keeps the sweep honest and cheap.
-            sim = Simulator(controller.act)
-            n = controller.genotype_length(sim.model)
+            sim = Simulator()
+            n = brain.num_weights(sim.model)
 
             for seed in args.seeds:
                 rng = np.random.default_rng(seed)
@@ -258,7 +284,7 @@ def experiment_clock(args: argparse.Namespace) -> None:
                     "improving_generations": improved,
                 })
     finally:
-        controller.CLOCK_FREQ = original
+        config.CLOCK_FREQ = original
 
     # Across seeds is the only comparison worth reading. A single seed cannot separate a real
     # difference from where the initial population happened to land.
@@ -292,18 +318,17 @@ def _act_with_qvel(
     data: mj.MjData,
     genotype: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:
-    """controller.act, with data.qvel appended to the inputs.
+    """The normal network, with data.qvel appended to the inputs.
 
-    Lives here rather than in controller.py because it is a probe, not a decision. It works
-    because simulate.Simulator takes the controller as a parameter - this is exactly what
-    that injection was for.
+    Lives here rather than in brain.py because it is a probe, not a decision. It works
+    because the Simulator shim above can swap in another network.
     """
-    n_in = controller.input_size(model) + len(data.qvel)
-    split = n_in * controller.HIDDEN_SIZE
-    w1 = genotype[:split].reshape(n_in, controller.HIDDEN_SIZE)
-    w2 = genotype[split:].reshape(controller.HIDDEN_SIZE, model.nu)
-    inputs = np.concatenate((controller.build_inputs(data), data.qvel))
-    return controller.forward(inputs, w1, w2) * controller.HINGE_LIMIT
+    n_in = brain.num_inputs(model) + len(data.qvel)
+    split = n_in * config.HIDDEN_SIZE
+    w1 = genotype[:split].reshape(n_in, config.HIDDEN_SIZE)
+    w2 = genotype[split:].reshape(config.HIDDEN_SIZE, model.nu)
+    inputs = np.concatenate((brain.sensor_inputs(data), data.qvel))
+    return np.tanh(np.tanh(inputs @ w1) @ w2) * (np.pi / 2)
 
 
 def experiment_qvel(args: argparse.Namespace) -> None:
@@ -317,14 +342,14 @@ def experiment_qvel(args: argparse.Namespace) -> None:
     so the qvel variant searches a higher-dimensional space on the same budget. A worse
     result does not cleanly mean the inputs are useless - it may mean the search got harder.
     """
-    baseline_sim = Simulator(controller.act)
-    n_baseline = controller.genotype_length(baseline_sim.model)
+    baseline_sim = Simulator()
+    n_baseline = brain.num_weights(baseline_sim.model)
 
     qvel_sim = Simulator(_act_with_qvel)
     n_qvel = (
-        (controller.input_size(qvel_sim.model) + len(qvel_sim.data.qvel))
-        * controller.HIDDEN_SIZE
-        + controller.HIDDEN_SIZE * qvel_sim.model.nu
+        (brain.num_inputs(qvel_sim.model) + len(qvel_sim.data.qvel))
+        * config.HIDDEN_SIZE
+        + config.HIDDEN_SIZE * qvel_sim.model.nu
     )
 
     print(f"{args.generations} generations, {len(args.seeds)} seeds\n")
@@ -371,7 +396,7 @@ def experiment_qvel(args: argparse.Namespace) -> None:
 #  nan - does the guard fire, and does WORST_FITNESS behave?
 # --------------------------------------------------------------------------- #
 def experiment_nan(args: argparse.Namespace) -> None:
-    """Check the NaN path in simulate.Simulator._make_callback.
+    """Check the NaN path in simulation.make_controller.
 
     Two things worth knowing, and the second is the interesting one.
 
@@ -384,8 +409,8 @@ def experiment_nan(args: argparse.Namespace) -> None:
     inf, or nan already in the genotype. Useful to know before writing a Methods sentence
     claiming the guard protects against runaway mutation.
     """
-    sim = Simulator(controller.act)
-    n = controller.genotype_length(sim.model)
+    sim = Simulator()
+    n = brain.num_weights(sim.model)
     rng = np.random.default_rng(args.seed)
     rows: list[dict] = []
 
@@ -436,8 +461,8 @@ def experiment_cache(args: argparse.Namespace) -> None:
     It is also the answer to "what is get_simulator's cache for". Delete the cache and every
     evaluation pays the rebuild column.
     """
-    sim = Simulator(controller.act)
-    n = controller.genotype_length(sim.model)
+    sim = Simulator()
+    n = brain.num_weights(sim.model)
     rng = np.random.default_rng(args.seed)
     genotypes = [rng.normal(scale=0.5, size=n) for _ in range(args.n)]
 
@@ -448,14 +473,14 @@ def experiment_cache(args: argparse.Namespace) -> None:
 
     started = time.perf_counter()
     for genotype in genotypes:
-        Simulator(controller.act).evaluate(genotype)
+        Simulator().evaluate(genotype)
     rebuild = (time.perf_counter() - started) / args.n
 
     print(f"{args.n} evaluations each\n")
     print(f"  reuse one Simulator   : {reuse:.3f} s/eval")
     print(f"  rebuild every time    : {rebuild:.3f} s/eval")
     print(f"  saving from reuse     : {rebuild / reuse:.2f}x")
-    print(f"\n  25 Sep, old controller on the 15-core machine: 0.168 / 0.210 s, 1.25x")
+    print("\n  25 Sep, old controller on the 15-core machine: 0.168 / 0.210 s, 1.25x")
 
     write_csv("cache", [{
         "evaluations": args.n,
@@ -471,7 +496,7 @@ def _child_evaluate(genotype_list: list[float]) -> float:
     Each worker compiles its own MjModel - MuJoCo models do not pickle - which is exactly the
     condition being tested. This is the same code path run.py will use.
     """
-    sim = Simulator(controller.act)
+    sim = Simulator()
     return sim.evaluate(np.asarray(genotype_list, dtype=np.float64))
 
 
@@ -493,13 +518,13 @@ def experiment_determinism(args: argparse.Namespace) -> None:
     Reported as an exact equality, not a tolerance. A difference of 1e-16 is still a difference
     and Methods should not claim bit-identical if it is only nearly so.
     """
-    sim = Simulator(controller.act)
-    n = controller.genotype_length(sim.model)
+    sim = Simulator()
+    n = brain.num_weights(sim.model)
     rng = np.random.default_rng(args.seed)
     genotype = rng.normal(scale=config.INIT_WEIGHT_SCALE, size=n)
 
     same = [sim.evaluate(genotype) for _ in range(args.repeats)]
-    fresh = [Simulator(controller.act).evaluate(genotype) for _ in range(args.repeats)]
+    fresh = [Simulator().evaluate(genotype) for _ in range(args.repeats)]
 
     ctx = mp.get_context("spawn")
     with ctx.Pool(processes=min(args.repeats, 4)) as pool:
@@ -545,8 +570,8 @@ def experiment_hidden(args: argparse.Namespace) -> None:
     earning another null, Methods states the parameter count and says the value was not tuned.
     This prints the number that argument needs.
     """
-    sim = Simulator(controller.act)
-    n_in = controller.input_size(sim.model)
+    sim = Simulator()
+    n_in = brain.num_inputs(sim.model)
     nu = sim.model.nu
     budget = config.POP_SIZE * config.NUM_GENERATIONS
 
@@ -575,9 +600,9 @@ def experiment_hidden(args: argparse.Namespace) -> None:
 def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     """One full run of the real EA. Module level, so a spawned worker can pickle it.
 
-    Unlike `search`, this is the algorithm Methods describes: ea.run_generation with
+    Unlike `search`, this is the algorithm Methods describes: evolve.run_generation with
     tournament selection, elitism and mutation.py's Static/AdaptiveMutation. So it is also the
-    first end-to-end test of ea.py and mutation.py together.
+    first end-to-end test of evolve.py and mutation.py together.
 
     Returns one row per generation, generation 0 being the initial population.
     """
@@ -592,18 +617,18 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
 
     # The initial population is drawn FIRST, before anything else touches the generator, so
     # every variant and every sigma0 starts from the same population at a given seed.
-    # `size` is passed explicitly: init_population's default was bound to config.POP_SIZE
-    # when ea.py was imported, before the patch above.
     started = time.perf_counter()
-    population = ea.evaluate(ea.init_population(rng, size=pop_size))
+    population = evolve.evaluate(evolve.init_population(rng))
 
     if variant == "static":
-        mutation = StaticMutation(rng, sigma=sigma0)
+        config.STATIC_SIGMA = sigma0
+        mutation = StaticMutation(rng)
     else:
-        mutation = AdaptiveMutation(rng, initial_sigma=sigma0, max_sigma=sigma_max)
+        config.ADAPTIVE_INITIAL_SIGMA = sigma0
+        mutation = AdaptiveMutation(rng, max_sigma=sigma_max)
 
     def row(generation: int, sigma: float | None, evaluations: int) -> dict:
-        best, mean, std = ea.fitness_stats(population)
+        best, mean, std = evolve.fitness_stats(population)
         return {
             "generation": generation,
             "variant": variant,
@@ -617,8 +642,8 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
             "success_rate": mutation.last_success_rate,
             "num_scored_mutations": mutation.last_num_scored,
             "num_mutated": mutation.last_num_mutated,
-            "mean_genotype_spread": round(ea.genotype_spread(population), 6),
-            "num_nan": ea.count_nan(population),
+            "mean_genotype_spread": round(evolve.genotype_spread(population), 6),
+            "num_nan": sum(ind.fitness_ == config.WORST_FITNESS for ind in population),
             "evaluations": evaluations,
             "seconds": round(time.perf_counter() - started, 1),
         }
@@ -629,7 +654,7 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     for generation in range(1, generations + 1):
         # Read BEFORE the offspring are made, so the logged sigma is the one that made them.
         sigma_used = mutation.sigma
-        population = ea.run_generation(variant, population, mutation, rng)
+        population = evolve.run_generation(variant, population, mutation, rng)
         evaluations += pop_size
         rows.append(row(generation, sigma_used, evaluations))
 
