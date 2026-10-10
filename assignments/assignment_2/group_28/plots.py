@@ -11,6 +11,11 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# Figures are made at the size they are printed (one column of the two-column template is about
+# 3.3 inch wide), so the text in them is as large as the caption text and stays readable
+FIGSIZE = (3.4, 2.5)
+plt.rcParams.update({"font.size": 8, "legend.fontsize": 6.5, "axes.titlesize": 8})
 import numpy as np
 import pandas as pd
 from scipy.stats import mannwhitneyu
@@ -129,23 +134,23 @@ def save(fig, ax, title: str, output_path: Path) -> None:
 
 def plot_fitness(curves: dict[str, Curve], output_path: Path, title: str) -> None:
     """Best-so-far fitness per generation, mean +- std over the seeds."""
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     for variant in VARIANT_ORDER:
         if variant not in curves:
             continue
         curve = curves[variant]
-        ax.plot(curve.generations, curve.mean, label=f"{LABELS[variant]} (n={len(curve.seeds)})",
+        ax.plot(curve.generations, curve.mean, label=LABELS[variant],
                 color=COLORS[variant], linestyle=LINESTYLES.get(variant, "-"), lw=1.8)
         ax.fill_between(curve.generations, curve.mean - curve.std, curve.mean + curve.std,
                         color=COLORS[variant], alpha=0.15)
     ax.set_xlabel("generation")
-    ax.set_ylabel("best-so-far fitness (distance to target, m)")
+    ax.set_ylabel("best-so-far distance to target (m)")
     save(fig, ax, title, output_path)
 
 
 def plot_sigma(curves: dict[str, Curve], output_path: Path, title: str) -> None:
     """Sigma of every adaptive run (thin) and the median per variant (thick)."""
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     for variant in ADAPTIVE_VARIANTS:
         curve = curves.get(variant)
         if curve is None or curve.sigma_runs is None:
@@ -154,7 +159,7 @@ def plot_sigma(curves: dict[str, Curve], output_path: Path, title: str) -> None:
             ax.plot(curve.generations, run, color=COLORS[variant], alpha=0.2, lw=0.7)
         median = ignore_nan_warnings(np.nanmedian, curve.sigma_runs, axis=0)
         ax.plot(curve.generations, median, color=COLORS[variant], lw=2.2,
-                label=f"{LABELS[variant]} (median, n={len(curve.seeds)})")
+                label=f"{LABELS[variant]}, median")
     ax.axhline(config.STATIC_SIGMA, color=COLORS["static"], ls="--", lw=1, label=LABELS["static"])
     ax.set_xlabel("generation")
     ax.set_ylabel(r"$\sigma$")
@@ -164,12 +169,12 @@ def plot_sigma(curves: dict[str, Curve], output_path: Path, title: str) -> None:
 
 def plot_success_rate(curves: dict[str, Curve], output_path: Path, title: str) -> None:
     """Mutation success rate per generation (mean over seeds) against the 1/5 target."""
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     for variant in EA_VARIANTS:
         curve = curves.get(variant)
         if curve is None or curve.success_mean is None:
             continue
-        ax.plot(curve.generations, curve.success_mean, label=f"{LABELS[variant]} (n={len(curve.seeds)})",
+        ax.plot(curve.generations, curve.success_mean, label=LABELS[variant],
                 color=COLORS[variant])
     ax.axhline(config.ADAPTIVE_TARGET_SUCCESS, color="grey", ls=":", lw=1, label="1/5 target")
     ax.set_xlabel("generation")
@@ -182,16 +187,16 @@ def plot_final_distance(curves: dict[str, Curve], output_path: Path, title: str)
     present = [variant for variant in VARIANT_ORDER if variant in curves]
     finals = [curves[variant].finals for variant in present]
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.boxplot(finals, showfliers=False, medianprops={"color": "black"})  # the dots already show outliers
     jitter = np.random.default_rng(0)  # fixed seed, so the figure is the same every time
     for i, (variant, values) in enumerate(zip(present, finals), start=1):
         x = i + jitter.uniform(-0.12, 0.12, size=len(values))
         ax.scatter(x, values, s=14, color=COLORS[variant], alpha=0.8, zorder=3)
     ax.axhline(SATURATION_DISTANCE, color="grey", ls=":", lw=1,
-               label=f"{SATURATION_DISTANCE} m (saturated below)")
+               label=f"{SATURATION_DISTANCE} m")
     ax.set_xticks(range(1, len(present) + 1))
-    ax.set_xticklabels([LABELS[variant] for variant in present], fontsize=8)
+    ax.set_xticklabels([LABELS[variant].replace(", ", ",\n") for variant in present], fontsize=6.5)
     ax.set_ylabel("final best distance to target (m)")
     save(fig, ax, title, output_path)
 

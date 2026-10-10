@@ -1,9 +1,8 @@
 # Per-run details on top of plots.py: the last generation each run improved by more than 0.01 m,
-# the sigma summary, and the sigma / success rate analysis repeated without the runs that (almost)
-# reached the target (both promised in Methods). Run from the project root, after plots.py:
+# and the sigma / success rate summary, once over all runs and once without the runs that ended
+# within 0.15 m of the target (both promised in Methods). Run from the project root:
 #   uv run assignments/assignment_2/group_28/diagnostics.py
-# Writes per_seed_detail.csv, sigma_summary.csv and the sigma / success rate plots without the
-# saturated runs to results/main/<body>/analysis/.
+# Writes per_seed_detail.csv and sigma_summary.csv to results/main/<body>/analysis/.
 
 import argparse
 
@@ -105,24 +104,11 @@ def main() -> None:
     runs = {variant: dfs for variant, dfs in runs.items() if dfs}
     output_dir = config.RESULTS_DIR / body / "analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
-    title = "without runs that ended within 0.15 m of the target"
 
     detail = per_seed_detail(runs)
     detail.to_csv(output_dir / "per_seed_detail.csv", index=False)
     sigmas = sigma_summary(detail)
     sigmas.to_csv(output_dir / "sigma_summary.csv", index=False)
-
-    # The sigma and success rate plots again, without the runs that (almost) reached the target
-    if detail.loc[detail["variant"].isin(plots.EA_VARIANTS), "saturated"].any():
-        unsaturated = {}
-        for variant in plots.EA_VARIANTS:
-            kept = [df for df in runs.get(variant, []) if not plots.is_saturated(df)]
-            curve = plots.make_curve(variant, kept)
-            if curve is not None:
-                unsaturated[variant] = curve
-        plots.plot_sigma(unsaturated, output_dir / "sigma_curve_unsaturated.png", title)
-        plots.plot_success_rate(unsaturated, output_dir / "success_rate_curve_unsaturated.png",
-                                title)
 
     print(detail.to_string(index=False))
     print()
