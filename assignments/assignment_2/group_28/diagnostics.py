@@ -2,7 +2,9 @@
 # and the sigma / success rate summary, once over all runs and once without the runs that ended
 # within 0.15 m of the target (both promised in Methods). Run from the project root:
 #   uv run assignments/assignment_2/group_28/diagnostics.py
-# Writes per_seed_detail.csv and sigma_summary.csv to results/main/<body>/analysis/.
+# Also summarizes the population diversity (mean per-gene standard deviation) at the start and end.
+# Writes per_seed_detail.csv, sigma_summary.csv and diversity_summary.csv to
+# results/main/<body>/analysis/.
 
 import argparse
 
@@ -59,6 +61,8 @@ def per_seed_detail(runs: dict[str, list[pd.DataFrame]]) -> pd.DataFrame:
                 "longest_stall_generations": stall_len,
                 "longest_stall_start": stall_start,
                 "longest_stall_end": stall_end,
+                "start_spread": float(df["mean_genotype_spread"].iloc[0]),
+                "final_spread": float(df["mean_genotype_spread"].iloc[-1]),
             }
             sigma = df["sigma"].to_numpy(dtype=float)
             if variant in plots.EA_VARIANTS and np.isfinite(sigma).any():
@@ -95,6 +99,14 @@ def sigma_summary(detail: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def diversity_summary(detail: pd.DataFrame) -> pd.DataFrame:
+    """Per EA variant: median population diversity in generation 0 and in the last generation."""
+    ea_runs = detail[detail["variant"].isin(plots.EA_VARIANTS)]
+    summary = ea_runs.groupby("variant")[["start_spread", "final_spread"]].median().round(3)
+    return summary.reset_index().rename(columns={"start_spread": "median_start_spread",
+                                                 "final_spread": "median_final_spread"})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Per-seed diagnostics.")
     parser.parse_args()  # no options, but gives --help
@@ -109,10 +121,14 @@ def main() -> None:
     detail.to_csv(output_dir / "per_seed_detail.csv", index=False)
     sigmas = sigma_summary(detail)
     sigmas.to_csv(output_dir / "sigma_summary.csv", index=False)
+    diversity = diversity_summary(detail)
+    diversity.to_csv(output_dir / "diversity_summary.csv", index=False)
 
     print(detail.to_string(index=False))
     print()
     print(sigmas.to_string(index=False))
+    print()
+    print(diversity.to_string(index=False))
 
 
 if __name__ == "__main__":
