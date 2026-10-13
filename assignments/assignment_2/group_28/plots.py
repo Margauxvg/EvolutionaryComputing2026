@@ -1,6 +1,6 @@
-# Makes the figures and statistics for the report from main.py's results. Run from the project root:
+# Makes the figures and statistics for the report from run.py's results. Run from the project root:
 #   uv run assignments/assignment_2/group_28/plots.py
-# Everything is written to results/main/<body>/analysis/.
+# Everything is written to results/analysis/.
 
 import argparse
 import json
@@ -58,15 +58,15 @@ def sample_std(values: list[float]) -> float:
 # Load data
 # ---------------------------------------------------------------------------
 
-def load_seed_runs(body: str, variant: str) -> list[pd.DataFrame]:
+def load_seed_runs(variant: str) -> list[pd.DataFrame]:
     """One dataframe per seed folder, with an extra best_so_far column."""
-    variant_dir = config.RESULTS_DIR / body / variant
+    variant_dir = config.RESULTS_DIR / variant
     if not variant_dir.exists():
         return []
 
     runs = []
     for seed_dir in sorted(variant_dir.iterdir(), key=lambda path: path.name):
-        path = seed_dir / config.RESULT_FILE_NAME
+        path = seed_dir / "fitness_overview.csv"
         if seed_dir.is_dir() and path.exists():
             df = pd.read_csv(path).sort_values("generation").reset_index(drop=True)
             df["best_so_far"] = df["best_fitness"].cummin()
@@ -321,11 +321,11 @@ def summary_table(curves: dict[str, Curve], runs: dict[str, list[pd.DataFrame]],
 # Main
 # ---------------------------------------------------------------------------
 
-def analyze(body: str, plateau_eps: float, plateau_window: int) -> None:
+def analyze(plateau_eps: float, plateau_window: int) -> None:
     runs: dict[str, list[pd.DataFrame]] = {}
     curves: dict[str, Curve] = {}
     for variant in VARIANT_ORDER:
-        variant_runs = load_seed_runs(body, variant)
+        variant_runs = load_seed_runs(variant)
         curve = make_curve(variant, variant_runs)
         if curve is None:
             print(f"  no seeds found for {variant}")
@@ -335,10 +335,10 @@ def analyze(body: str, plateau_eps: float, plateau_window: int) -> None:
         print(f"  {variant}: {len(curve.seeds)} seed(s) {curve.seeds}")
 
     if not curves:
-        print(f"No results found in {config.RESULTS_DIR / body}")
+        print(f"No results found in {config.RESULTS_DIR}")
         return
 
-    output_dir = config.RESULTS_DIR / body / "analysis"
+    output_dir = config.RESULTS_DIR / "analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
     title = ""  # the report gives every figure a caption
 
@@ -370,7 +370,6 @@ def analyze(body: str, plateau_eps: float, plateau_window: int) -> None:
     }
 
     summary = {
-        "body": body,
         "plateau_eps": plateau_eps,
         "plateau_window": plateau_window,
         "plateau_generation": plateaus,
@@ -406,7 +405,7 @@ def main() -> None:
     parser.add_argument("--plateau-window", type=int, default=20,
                         help="Generations the improvement is measured over. Defaults to: %(default)s.")
     args = parser.parse_args()
-    analyze(config.BODY_NAME, args.plateau_eps, args.plateau_window)
+    analyze(args.plateau_eps, args.plateau_window)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Watch the robot in the MuJoCo viewer. Run from the project root:
 #   uv run assignments/assignment_2/group_28/extras/watch.py      (random weights, wiggles without direction)
-#   uv run assignments/assignment_2/group_28/extras/watch.py --load assignments/assignment_2/group_28/results/main/gecko/adaptive/seed_101/best.npy
+#   uv run assignments/assignment_2/group_28/extras/watch.py --load assignments/assignment_2/group_28/results/adaptive/seed_101/best.npy
 #   uv run assignments/assignment_2/group_28/extras/watch.py --quick-evolve 20     (a tiny throwaway search first, NOT the real EA)
 # --quick-evolve saves its best genotype to extras/quick_best.npy, so you can --load it later.
 
@@ -44,7 +44,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Watch the robot in the viewer.")
     parser.add_argument("--load", type=Path, help="genotype .npy file to watch")
     parser.add_argument("--quick-evolve", type=int, metavar="GENS", help="run a tiny search for GENS generations first")
-    parser.add_argument("--seed", type=int, default=config.DEFAULT_SEED)
+    parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
 
     model, data = simulation.build_world()

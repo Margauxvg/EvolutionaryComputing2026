@@ -14,7 +14,6 @@ Zip `group_28` without this folder for the hand-in.
 | `results/` | results of the pilots and smoke tests (`pilot_experiments.py` writes here); not committed, like every `results/` folder |
 
 The notes in `docs/` were written before the code was renamed:
-`run.py` -> `main.py`, `ea.py` -> `evolve.py`, `simulate.py` -> `simulation.py`,
-`controller.py` -> `brain.py`, `analyze.py` -> `plots.py` (+ `diagnostics.py`),
+`simulate.py` -> `simulation.py`, `controller.py` -> `brain.py`, `analyze.py` -> `plots.py` (+ `diagnostics.py`),
 `experiments.py` -> `extras/pilot_experiments.py`, `test_sphere.py` -> `extras/sphere_check.py`,
 `phase1_timing.py` -> `extras/timing.py`.

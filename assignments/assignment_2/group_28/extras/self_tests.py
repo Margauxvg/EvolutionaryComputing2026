@@ -26,7 +26,7 @@ def check_controller() -> None:
     print(f"inputs           : {brain.num_inputs(model)}")
     print(f"genotype length  : {n}")
 
-    genotype = np.random.default_rng(config.DEFAULT_SEED).normal(scale=0.5, size=n)
+    genotype = np.random.default_rng(1).normal(scale=0.5, size=n)
     targets = brain.hinge_targets(data, *brain.split_weights(genotype, model))
     print(f"outputs in hinge range: {bool(np.all(np.abs(targets) <= np.pi / 2))}")
 
@@ -50,7 +50,7 @@ def fake_offspring(n: int, parent_fitness: float, rng: np.random.Generator) -> P
 def check_one_fifth_rule() -> None:
     """Fake fitnesses, no simulator: adaptive sigma should grow while more than 1/5 of the
     mutations succeed and shrink below that, static sigma should never move."""
-    rng = np.random.default_rng(config.DEFAULT_SEED)
+    rng = np.random.default_rng(1)
 
     for label, success_fraction in (("60% of mutations succeed", 0.6), ("0% of mutations succeed", 0.0)):
         adaptive = AdaptiveMutation(np.random.default_rng(1), max_sigma=config.ADAPTIVE_MAX_SIGMA)

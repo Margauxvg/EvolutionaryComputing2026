@@ -9,7 +9,7 @@ import config
 import simulation
 from mutation import MutationVariant
 
-# Every process (also every worker in main.py) builds its own world when it imports this
+# Every process (also every worker in run.py) builds its own world when it imports this
 # file, because a compiled MuJoCo model cannot be sent to another process.
 MODEL, DATA = simulation.build_world()
 

@@ -20,7 +20,7 @@ class MutationVariant:
     def __init__(self, rng: np.random.Generator) -> None:
         self.rng = rng
         self._pending: list[Individual] = []
-        self._window: deque[tuple[int, int]] = deque(maxlen=config.ADAPTIVE_WINDOW)
+        self._window: deque[tuple[int, int]] = deque(maxlen=config.SUCCESS_WINDOW)
         self.last_success_rate: float | None = None
         self.last_num_scored: int = 0
         self.last_num_mutated: int = 0
@@ -70,10 +70,6 @@ class AdaptiveMutation(MutationVariant):
 
     def adapt(self, population: Population) -> Population:
         self._measure()
-
-        # Do not adapt if there are too few scored mutations in the window.
-        if self.last_success_rate is None or self.last_num_scored < config.ADAPTIVE_MIN_SAMPLES:
-            return population
 
         if self.last_success_rate > config.ADAPTIVE_TARGET_SUCCESS:
             self.sigma = min(self.max_sigma, self.sigma * config.ADAPTIVE_FACTOR)

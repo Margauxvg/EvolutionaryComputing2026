@@ -1,8 +1,8 @@
 # Run from the project root (EvolutionaryComputing2026), for example:
-#   uv run assignments/assignment_2/group_28/main.py --workers 16                  (full experiment: all variants, all 20 seeds)
-#   uv run assignments/assignment_2/group_28/main.py --variant static --seed 101   (one run)
+#   uv run assignments/assignment_2/group_28/run.py --workers 16                  (full experiment: all variants, all 20 seeds)
+#   uv run assignments/assignment_2/group_28/run.py --variant static --seed 101   (one run)
 #
-# Every run is saved in results/main/<body>/<variant>/seed_<seed>/: the per-generation csv, the
+# Every run is saved in results/<variant>/seed_<seed>/: the per-generation csv (fitness_overview.csv), the
 # best genotype (best.npy) and run_info.json. Runs that already have a run_info.json are skipped.
 
 import argparse
@@ -20,12 +20,12 @@ import numpy as np
 from ariel.ec import set_seed
 
 import config
-import evolve
+import ea
 from mutation import make_mutation
 
 
 def run_dir(variant: str, seed: int) -> Path:
-    path = config.RESULTS_DIR / config.BODY_NAME / variant / f"seed_{seed}"
+    path = config.RESULTS_DIR / variant / f"seed_{seed}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -35,7 +35,7 @@ def is_done(variant: str, seed: int) -> bool:
 
 
 def make_row(generation: int, variant: str, seed: int, population, sigma_used: float | None, mutation) -> dict:
-    best, mean, std = evolve.fitness_stats(population)
+    best, mean, std = ea.fitness_stats(population)
     success_rate = getattr(mutation, "last_success_rate", None)
 
     return {
@@ -49,8 +49,8 @@ def make_row(generation: int, variant: str, seed: int, population, sigma_used: f
         "success_rate": "nan" if success_rate is None else round(success_rate, 4),
         "num_scored_mutations": getattr(mutation, "last_num_scored", 0),
         "num_mutated": getattr(mutation, "last_num_mutated", 0),
-        "mean_genotype_spread": round(evolve.genotype_spread(population), 6),
-        "num_nan": evolve.num_failed,
+        "mean_genotype_spread": round(ea.genotype_spread(population), 6),
+        "num_nan": ea.num_failed,
         "evaluations": config.POP_SIZE * (generation + 1),
     }
 
@@ -61,7 +61,7 @@ def run(variant: str, seed: int) -> Path:
     set_seed(seed)
     started = time.perf_counter()
 
-    population = evolve.evaluate(evolve.init_population(rng))
+    population = ea.evaluate(ea.init_population(rng))
     mutation = make_mutation(variant, rng)
     sigma_start = getattr(mutation, "sigma", None)
 
@@ -75,7 +75,7 @@ def run(variant: str, seed: int) -> Path:
     for generation in range(1, config.NUM_GENERATIONS + 1):
         # The sigma used to make this generation's offspring, before adapt() changes it
         sigma_used = getattr(mutation, "sigma", None)
-        population = evolve.run_generation(variant, population, mutation, rng)
+        population = ea.run_generation(variant, population, mutation, rng)
         rows.append(make_row(generation, variant, seed, population, sigma_used, mutation))
 
         current = min(population, key=lambda individual: individual.fitness_)
@@ -83,7 +83,7 @@ def run(variant: str, seed: int) -> Path:
             best_fitness, best_generation = current.fitness_, generation
             best_genotype = np.asarray(current.genotype, dtype=np.float64)
 
-        if generation % 10 == 0 or generation == config.NUM_GENERATIONS:
+        if generation % 10 == 0 or generation == config.NUM_GENERATIONS: # print progress
             elapsed = time.perf_counter() - started
             print(f"  {variant} seed={seed} gen {generation}/{config.NUM_GENERATIONS} "
                   f"best {best_fitness:.4f} ({elapsed:.0f}s)", flush=True)
@@ -91,8 +91,8 @@ def run(variant: str, seed: int) -> Path:
     wall = time.perf_counter() - started
     folder = run_dir(variant, seed)
 
-    with (folder / config.RESULT_FILE_NAME).open("w", newline="") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=config.CSV_COLUMNS)
+    with (folder / "fitness_overview.csv").open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
 
@@ -100,8 +100,7 @@ def run(variant: str, seed: int) -> Path:
 
     evaluations = config.POP_SIZE * (config.NUM_GENERATIONS + 1)
     info = {
-        "body": config.BODY_NAME,
-        "hinges": int(evolve.MODEL.nu),
+        "hinges": int(ea.MODEL.nu),
         "genotype_length": int(best_genotype.size),
         "variant": variant,
         "seed": seed,

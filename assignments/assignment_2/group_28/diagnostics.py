@@ -4,7 +4,7 @@
 #   uv run assignments/assignment_2/group_28/diagnostics.py
 # Also summarizes the population diversity (mean per-gene standard deviation) at the start and end.
 # Writes per_seed_detail.csv, sigma_summary.csv and diversity_summary.csv to
-# results/main/<body>/analysis/.
+# results/analysis/.
 
 import argparse
 
@@ -111,10 +111,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Per-seed diagnostics.")
     parser.parse_args()  # no options, but gives --help
 
-    body = config.BODY_NAME
-    runs = {variant: plots.load_seed_runs(body, variant) for variant in plots.VARIANT_ORDER}
+    runs = {variant: plots.load_seed_runs(variant) for variant in plots.VARIANT_ORDER}
     runs = {variant: dfs for variant, dfs in runs.items() if dfs}
-    output_dir = config.RESULTS_DIR / body / "analysis"
+    output_dir = config.RESULTS_DIR / "analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     detail = per_seed_detail(runs)
@@ -123,13 +122,6 @@ def main() -> None:
     sigmas.to_csv(output_dir / "sigma_summary.csv", index=False)
     diversity = diversity_summary(detail)
     diversity.to_csv(output_dir / "diversity_summary.csv", index=False)
-
-    print(detail.to_string(index=False))
-    print()
-    print(sigmas.to_string(index=False))
-    print()
-    print(diversity.to_string(index=False))
-
 
 if __name__ == "__main__":
     main()

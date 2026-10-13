@@ -38,20 +38,14 @@ def sensor_inputs(data: mj.MjData) -> np.ndarray:
     # https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
     yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
-    # Rotate the vector to the target into the robot's own frame, so "ahead" means the same
-    # thing whichever way the robot is turned.
+    # Rotate the vector to the target into the robot's own frame, so "ahead" means the samething whichever way the robot is turned.
     dx = config.TARGET_POSITION[0] - x
     dy = config.TARGET_POSITION[1] - y
-    ahead = math.cos(yaw) * dx + math.sin(yaw) * dy
-    left = -math.sin(yaw) * dx + math.cos(yaw) * dy
-    # Keep np.arctan2/np.hypot (and not math.*): they can differ in the last digit, and the
-    # results of the main experiment were made with these
+    ahead = np.cos(yaw) * dx + np.sin(yaw) * dy
+    left = -np.sin(yaw) * dx + np.cos(yaw) * dy
     distance = np.hypot(ahead, left)
 
-    if distance > 1e-8:
-        direction = [ahead / distance, left / distance]
-    else:
-        direction = [0.0, 0.0]
+    direction = [ahead / distance, left / distance] if distance > 1e-8 else [0.0, 0.0]
 
     # data.time starts at 0 in every evaluation, so the clock always starts at the same point
     phase = 2.0 * math.pi * config.CLOCK_FREQ * data.time

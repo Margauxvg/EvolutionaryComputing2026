@@ -32,7 +32,7 @@ WHAT EACH ONE IS FOR
     hidden    Prints genotype length against HIDDEN_SIZE. No simulation - this is the
               parameter-count argument for Methods, not a sweep.
     sigma     Which fixed sigma should the static variant use, and does the 1/5 rule end up
-              in the same place whatever sigma it starts from? Runs the REAL EA (evolve.py and
+              in the same place whatever sigma it starts from? Runs the REAL EA (ea.py and
               mutation.py), not the throwaway ES the other probes use.
 
 Results print as a table and are appended to results/<name>.csv so they can be cited.
@@ -58,7 +58,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import brain
 import config
-import evolve
+import ea
 import simulation
 from mutation import AdaptiveMutation, StaticMutation
 
@@ -600,9 +600,9 @@ def experiment_hidden(args: argparse.Namespace) -> None:
 def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     """One full run of the real EA. Module level, so a spawned worker can pickle it.
 
-    Unlike `search`, this is the algorithm Methods describes: evolve.run_generation with
+    Unlike `search`, this is the algorithm Methods describes: ea.run_generation with
     tournament selection, elitism and mutation.py's Static/AdaptiveMutation. So it is also the
-    first end-to-end test of evolve.py and mutation.py together.
+    first end-to-end test of ea.py and mutation.py together.
 
     Returns one row per generation, generation 0 being the initial population.
     """
@@ -618,7 +618,7 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     # The initial population is drawn FIRST, before anything else touches the generator, so
     # every variant and every sigma0 starts from the same population at a given seed.
     started = time.perf_counter()
-    population = evolve.evaluate(evolve.init_population(rng))
+    population = ea.evaluate(ea.init_population(rng))
 
     if variant == "static":
         config.STATIC_SIGMA = sigma0
@@ -628,7 +628,7 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
         mutation = AdaptiveMutation(rng, max_sigma=sigma_max)
 
     def row(generation: int, sigma: float | None, evaluations: int) -> dict:
-        best, mean, std = evolve.fitness_stats(population)
+        best, mean, std = ea.fitness_stats(population)
         return {
             "generation": generation,
             "variant": variant,
@@ -642,7 +642,7 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
             "success_rate": mutation.last_success_rate,
             "num_scored_mutations": mutation.last_num_scored,
             "num_mutated": mutation.last_num_mutated,
-            "mean_genotype_spread": round(evolve.genotype_spread(population), 6),
+            "mean_genotype_spread": round(ea.genotype_spread(population), 6),
             "num_nan": sum(ind.fitness_ == config.WORST_FITNESS for ind in population),
             "evaluations": evaluations,
             "seconds": round(time.perf_counter() - started, 1),
@@ -654,7 +654,7 @@ def _sigma_run(job: tuple[str, float, int, int, int, float, str]) -> list[dict]:
     for generation in range(1, generations + 1):
         # Read BEFORE the offspring are made, so the logged sigma is the one that made them.
         sigma_used = mutation.sigma
-        population = evolve.run_generation(variant, population, mutation, rng)
+        population = ea.run_generation(variant, population, mutation, rng)
         evaluations += pop_size
         rows.append(row(generation, sigma_used, evaluations))
 
@@ -851,7 +851,7 @@ def _summarise_sigma(rows: list[dict], args: argparse.Namespace) -> None:
         for sigma0 in args.sigmas:
             values = [r["success_rate"] for r in rows
                       if r["variant"] == "static" and r["sigma0"] == sigma0
-                      and r["generation"] > config.ADAPTIVE_WINDOW and r["success_rate"] is not None]
+                      and r["generation"] > config.SUCCESS_WINDOW and r["success_rate"] is not None]
             rates[sigma0] = statistics.fmean(values) if values else float("nan")
             print(f"   sigma {sigma0:<5} mean success rate {rates[sigma0]:.3f}")
         ordered = [rates[s] for s in sorted(args.sigmas)]
@@ -898,17 +898,17 @@ def main() -> None:
     p.set_defaults(func=experiment_qvel)
 
     p = subparsers.add_parser("nan", help="does the NaN guard fire?")
-    p.add_argument("--seed", type=int, default=getattr(config, "DEFAULT_SEED", 1))
+    p.add_argument("--seed", type=int, default=1)
     p.set_defaults(func=experiment_nan)
 
     p = subparsers.add_parser("cache", help="what does compiling once buy?")
     p.add_argument("--n", type=int, default=10, help="evaluations per condition")
-    p.add_argument("--seed", type=int, default=getattr(config, "DEFAULT_SEED", 1))
+    p.add_argument("--seed", type=int, default=1)
     p.set_defaults(func=experiment_cache)
 
     p = subparsers.add_parser("determ", help="bit-identical across rebuilds and processes?")
     p.add_argument("--repeats", type=int, default=4)
-    p.add_argument("--seed", type=int, default=getattr(config, "DEFAULT_SEED", 1))
+    p.add_argument("--seed", type=int, default=1)
     p.set_defaults(func=experiment_determinism)
 
     p = subparsers.add_parser("hidden", help="genotype length vs HIDDEN_SIZE (no simulation)")
